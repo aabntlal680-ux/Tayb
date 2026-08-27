@@ -35,6 +35,11 @@ export const STR = {
     sent: "أُرسلت",
     attach: "إرفاق",
     admins: "المشرفون",
+    pick_a_chat: "اختر محادثة لبدء المراسلة",
+    recording_hint: "جاري التسجيل...",
+    offline_notice: "لا يوجد اتصال بالإنترنت — سيتم إرسال رسائلك عند عودة الاتصال",
+    enable_push: "تفعيل إشعارات الجهاز",
+    pending: "قيد الإرسال",
   },
   en: {
     dir: "ltr",
@@ -72,6 +77,11 @@ export const STR = {
     sent: "Sent",
     attach: "Attach",
     admins: "Supervisors",
+    pick_a_chat: "Pick a chat to start messaging",
+    recording_hint: "Recording...",
+    offline_notice: "No internet connection — your messages will send once you're back online",
+    enable_push: "Enable device notifications",
+    pending: "Pending",
   },
 };
 
