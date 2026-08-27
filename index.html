@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>محادثات</title>
-<link rel="manifest" href="/manifest.json" />
+<link rel="manifest" href="./manifest.json" />
 <meta name="theme-color" content="#111b21" />
 <link rel="stylesheet" href="./css/style.css" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -41,6 +41,10 @@
 
 <!-- ================= APP SHELL ================= -->
 <div id="app-shell" class="app-shell hidden">
+  <div id="offline-banner" class="offline-banner hidden" data-i18n="offline_notice">
+    لا يوجد اتصال بالإنترنت — سيتم إرسال رسائلك عند عودة الاتصال
+  </div>
+
 
   <!-- Sidebar: contact / chat list -->
   <aside id="sidebar" class="sidebar">
@@ -61,6 +65,7 @@
       <input id="avatar-input" type="file" accept="image/*" />
       <label data-i18n="wallpaper">خلفية الدردشة</label>
       <input id="wallpaper-input" type="file" accept="image/*" />
+      <button id="btn-enable-push" type="button" data-i18n="enable_push">تفعيل إشعارات الجهاز</button>
       <button id="btn-logout" class="logout-btn" data-i18n="logout">تسجيل الخروج</button>
     </div>
 
@@ -80,28 +85,8 @@
     </div>
   </aside>
 
-  <!-- Chat panel -->
-  <section id="chat-panel" class="chat-panel">
-    <header class="chat-header">
-      <button id="back-to-list" class="back-btn">←</button>
-      <div class="avatar"><img id="chat-header-avatar" src="" alt="" /></div>
-      <div class="chat-header-info">
-        <div id="chat-header-name" class="chat-header-name"></div>
-        <div id="chat-header-status" class="chat-header-status"></div>
-        <div id="typing-indicator" class="typing-indicator hidden" data-i18n="typing">يكتب الآن...</div>
-      </div>
-    </header>
-
-    <div id="chat-messages" class="chat-messages"></div>
-
-    <form id="composer-form" class="composer">
-      <button type="button" id="emoji-toggle">😊</button>
-      <div id="emoji-panel" class="emoji-panel hidden"></div>
-      <label class="attach-btn">📎<input id="attach-input" type="file" hidden /></label>
-      <input id="composer-input" type="text" autocomplete="off" data-i18n-placeholder="type_message" placeholder="اكتب رسالة" />
-      <button type="submit" class="send-btn">➤</button>
-    </form>
-  </section>
+  <!-- Chat panel: يُحقن من partials/chat-panel.html عبر app.js -->
+  <div id="chat-panel-container"></div>
 </div>
 
 <audio id="notification-sound" src="./icons/notify.mp3" preload="auto"></audio>
