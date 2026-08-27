@@ -1,8 +1,12 @@
 // ============================================================
 // إعدادات الاتصال — عدّل القيم التالية بمعلومات مشروعك في Supabase
 // ============================================================
-export const SUPABASE_URL = "https://ludoyidbumhzomjotrqc.supabase.co";
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1ZG95aWRidW1oem9tam90cnFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1MTA0MzIsImV4cCI6MjEwMzA4NjQzMn0.PR7qnskKcXWgjN9Y-1IBqAu8URm348sXeCPMCIo9mDA";
+export const SUPABASE_URL = "https://your-project-id.supabase.co";
+export const SUPABASE_ANON_KEY = "your-anon-key";
+
+// مفتاح VAPID العام لتفعيل Web Push (نفس المفتاح المستخدم في Edge Function)
+// وَلِّده بالأمر: npx web-push generate-vapid-keys
+export const VAPID_PUBLIC_KEY = "PASTE_YOUR_VAPID_PUBLIC_KEY_HERE";
 
 // قائمة المشرفين الثابتة (يجب أن تطابق دالة is_admin_email في schema.sql)
 export const ADMINS = [
