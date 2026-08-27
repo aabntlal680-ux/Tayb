@@ -1,14 +1,14 @@
 const CACHE_NAME = "wa-clone-shell-v1";
 const APP_SHELL = [
-  "./",
-  "./index.html",
-  "./css/style.css",
-  "./js/app.js",
-  "./js/auth.js",
-  "./js/config.js",
-  "./js/i18n.js",
-  "./js/supabaseClient.js",
-  "./manifest.json",
+  "/",
+  "/index.html",
+  "/css/style.css",
+  "/js/app.js",
+  "/js/auth.js",
+  "/js/config.js",
+  "/js/i18n.js",
+  "/js/supabaseClient.js",
+  "/manifest.json",
 ];
 
 self.addEventListener("install", (event) => {
