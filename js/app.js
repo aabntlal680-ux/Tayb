@@ -1,42 +1,100 @@
 import { supabase } from "./supabaseClient.js";
 import { signUp, signIn, signOut, getCurrentProfile } from "./auth.js";
-import { ADMINS, isAdminEmail } from "./config.js";
+import { ADMINS } from "./config.js";
 import { applyLanguage } from "./i18n.js";
+import {
+  cacheMessages,
+  getCachedMessages,
+  cacheContacts,
+  getCachedContacts,
+  queueOutboxMessage,
+  getOutbox,
+  removeFromOutbox,
+} from "./db.js";
+import { enablePushNotifications, disablePushNotifications } from "./push.js";
 
 const state = {
-  me: null, // current profile row
-  t: null, // current i18n strings
+  me: null,
+  t: null,
   lang: localStorage.getItem("wa_lang") || "ar",
   theme: localStorage.getItem("wa_theme") || "dark",
-  contacts: [], // profiles list to show in sidebar (admins, or admin's users)
+  contacts: [],
   activeConversation: null, // { id, otherProfile }
   messages: [],
+  reactions: {}, // messageId -> [{id, emoji, user_id}]
+  replyingTo: null,
   msgChannel: null,
   typingChannel: null,
+  reactionsChannel: null,
   presenceChannel: null,
   typingTimeout: null,
-  onlineMap: {}, // profile_id -> bool
+  onlineMap: {},
+  heartbeatInterval: null,
+  recording: null, // { mediaRecorder, chunks, stream, seconds, timerInterval }
+  isOnline: navigator.onLine,
 };
 
 const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
 
 // ---------------------------------------------------------------
 // BOOT
 // ---------------------------------------------------------------
 async function boot() {
   document.body.setAttribute("data-theme", state.theme);
-  state.t = applyLanguage(state.lang);
+
+  await loadChatPanelPartial();
+  state.t = applyLanguage(state.lang); // بعد حقن الجزء الديناميكي حتى تُطبَّق data-i18n عليه أيضاً
 
   const { data: { session } } = await supabase.auth.getSession();
+  wireAuthForms();
+  wireChrome();
+
   if (session) {
     await enterApp();
   } else {
     showAuthScreen();
   }
 
-  wireAuthForms();
-  wireChrome();
+  window.addEventListener("beforeunload", () => {
+    if (state.me) {
+      navigator.sendBeacon &&
+        navigator.sendBeacon(
+          "about:blank" // no-op fallback; real update happens in visibilitychange below when supported
+        );
+    }
+  });
+  document.addEventListener("visibilitychange", async () => {
+    if (!state.me) return;
+    if (document.visibilityState === "hidden") {
+      await touchLastSeen(false);
+    } else {
+      await touchLastSeen(true);
+    }
+  });
+
+  window.addEventListener("online", () => {
+    state.isOnline = true;
+    updateOfflineBanner();
+    flushOutbox();
+  });
+  window.addEventListener("offline", () => {
+    state.isOnline = false;
+    updateOfflineBanner();
+  });
+  updateOfflineBanner();
+}
+
+function updateOfflineBanner() {
+  const banner = $("#offline-banner");
+  if (!banner) return;
+  banner.classList.toggle("hidden", state.isOnline);
+}
+
+// تحميل واجهة المحادثة كملف HTML منفصل وحقنها في الصفحة
+async function loadChatPanelPartial() {
+  const res = await fetch("./partials/chat-panel.html");
+  const html = await res.text();
+  $("#chat-panel-container").innerHTML = html;
 }
 
 function showAuthScreen() {
@@ -56,9 +114,28 @@ async function enterApp() {
   if (state.me.avatar_url) $("#my-avatar").src = state.me.avatar_url;
   applyThemeVars();
 
+  await touchLastSeen(true);
+  startHeartbeat();
+
   await loadContacts();
   subscribeGlobalPresence();
   subscribeInboxUpdates();
+  if (state.isOnline) flushOutbox();
+}
+
+async function touchLastSeen(online) {
+  if (!state.me) return;
+  await supabase
+    .from("profiles")
+    .update({ is_online: online, last_seen: new Date().toISOString() })
+    .eq("id", state.me.id);
+}
+
+function startHeartbeat() {
+  clearInterval(state.heartbeatInterval);
+  state.heartbeatInterval = setInterval(() => {
+    if (document.visibilityState === "visible") touchLastSeen(true);
+  }, 25000);
 }
 
 // ---------------------------------------------------------------
@@ -111,7 +188,7 @@ function showAuthError(msg) {
 }
 
 // ---------------------------------------------------------------
-// CHROME: settings, logout, language/theme toggles, composer
+// CHROME
 // ---------------------------------------------------------------
 function wireChrome() {
   $("#btn-settings").addEventListener("click", () => $("#settings-panel").classList.toggle("hidden"));
@@ -135,7 +212,17 @@ function wireChrome() {
 
   $("#avatar-input").addEventListener("change", handleAvatarUpload);
   $("#wallpaper-input").addEventListener("change", handleWallpaperUpload);
+  $("#btn-enable-push").addEventListener("click", async () => {
+    const ok = await enablePushNotifications(state.me.id);
+    showAuthError(ok ? "تم تفعيل الإشعارات ✅" : "تعذّر التفعيل — تحقق من إذن المتصفح أو مفتاح VAPID");
+  });
 
+  wireChatPanel();
+  wireEmojiPicker();
+}
+
+// كل ما يخص لوحة المحادثة (تُحقن ديناميكياً، لذلك نربطها بعد loadChatPanelPartial)
+function wireChatPanel() {
   $("#composer-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const input = $("#composer-input");
@@ -153,7 +240,10 @@ function wireChrome() {
     $("#sidebar").classList.remove("mobile-hidden");
   });
 
-  wireEmojiPicker();
+  $("#reply-preview-cancel").addEventListener("click", clearReply);
+
+  $("#mic-btn").addEventListener("click", toggleRecording);
+  $("#recording-cancel").addEventListener("click", cancelRecording);
 }
 
 function applyThemeVars() {
@@ -166,26 +256,55 @@ function applyThemeVars() {
 // CONTACTS / ROLE ROUTING
 // ---------------------------------------------------------------
 async function loadContacts() {
-  const list = $("#contact-list");
-  list.innerHTML = "";
+  if (!state.isOnline) {
+    const cached = await getCachedContacts();
+    renderContactsFromCache(cached);
+    return;
+  }
+  try {
+    await loadContactsFromNetwork();
+  } catch (err) {
+    const cached = await getCachedContacts();
+    renderContactsFromCache(cached);
+  }
+}
 
+function renderContactsFromCache(cached) {
+  $("#contact-list").innerHTML = "";
+  $("#admins-heading").classList.add("hidden");
+  $("#admins-section").classList.add("hidden");
+  $("#users-heading").classList.add("hidden");
+  $("#users-section").classList.add("hidden");
+  cached.forEach((c) => $("#contact-list").appendChild(buildContactRow(c, { withUnread: !!c._unread })));
+}
+
+async function loadContactsFromNetwork() {
   if (!state.me.is_admin) {
-    // مستخدم عادي: يرى قائمة المشرفين الثابتة فقط
     const { data: adminProfiles } = await supabase
       .from("profiles")
       .select("*")
       .in("email", ADMINS.map((a) => a.email));
-    state.contacts = adminProfiles || ADMINS.map((a) => ({ email: a.email, display_name: a.name, id: null }));
-    renderContactList(state.contacts, { withUnread: false });
+    state.contacts = adminProfiles || [];
+    $("#contact-list").innerHTML = "";
+    $("#admins-heading").classList.add("hidden");
+    $("#admins-section").classList.add("hidden");
+    $("#users-heading").classList.add("hidden");
+    $("#users-section").classList.add("hidden");
+    state.contacts.forEach((c) => $("#contact-list").appendChild(buildContactRow(c, { withUnread: false })));
+    await cacheContacts(state.contacts);
   } else {
-    // مشرف: المستوى الأول = بقية المشرفين
+    $("#contact-list").innerHTML = "";
+    $("#admins-heading").classList.remove("hidden");
+    $("#admins-section").classList.remove("hidden");
+    $("#users-heading").classList.remove("hidden");
+    $("#users-section").classList.remove("hidden");
+
     const { data: otherAdmins } = await supabase
       .from("profiles")
       .select("*")
       .eq("is_admin", true)
       .neq("id", state.me.id);
 
-    // المستوى الثاني = المستخدمون الذين راسلوه، مع عداد غير مقروء
     const { data: convs } = await supabase
       .from("conversations")
       .select("*, user:profiles!conversations_user_id_fkey(*)")
@@ -203,19 +322,12 @@ async function loadContacts() {
       userContacts.push({ ...c.user, _conversationId: c.id, _unread: count || 0, _lastMessage: c.last_message });
     }
 
-    renderContactSection($("#admins-section"), otherAdmins || [], { withUnread: false });
-    renderContactSection($("#users-section"), userContacts, { withUnread: true });
+    $("#admins-section").innerHTML = "";
+    (otherAdmins || []).forEach((c) => $("#admins-section").appendChild(buildContactRow(c, { withUnread: false })));
+    $("#users-section").innerHTML = "";
+    userContacts.forEach((c) => $("#users-section").appendChild(buildContactRow(c, { withUnread: true })));
+    await cacheContacts([...(otherAdmins || []), ...userContacts]);
   }
-}
-
-function renderContactList(contacts, opts) {
-  const list = $("#contact-list");
-  contacts.forEach((c) => list.appendChild(buildContactRow(c, opts)));
-}
-
-function renderContactSection(container, contacts, opts) {
-  container.innerHTML = "";
-  contacts.forEach((c) => container.appendChild(buildContactRow(c, opts)));
 }
 
 function buildContactRow(c, opts) {
@@ -246,10 +358,13 @@ function escapeHtml(str) {
 // CONVERSATION
 // ---------------------------------------------------------------
 async function openConversation(otherProfile) {
-  if (!otherProfile.id) return; // المشرف لم يسجل دخول بعد
+  if (!otherProfile.id) return;
 
   $("#chat-panel").classList.add("mobile-visible");
   $("#sidebar").classList.add("mobile-hidden");
+  $("#chat-empty-state").classList.add("hidden");
+  $("#chat-active").classList.remove("hidden");
+  clearReply();
 
   let conversationId = otherProfile._conversationId;
   if (!conversationId) {
@@ -277,20 +392,46 @@ async function openConversation(otherProfile) {
   state.activeConversation = { id: conversationId, otherProfile };
   $("#chat-header-name").textContent = otherProfile.display_name;
   $("#chat-header-avatar").src = otherProfile.avatar_url || "";
-  updatePresenceLabel(otherProfile.id);
+  await refreshPresenceLabel(otherProfile.id);
 
   await loadMessages(conversationId);
+  await loadReactionsForConversation();
   subscribeToConversation(conversationId);
   await markConversationRead(conversationId);
 }
 
 async function loadMessages(conversationId) {
-  const { data } = await supabase
+  // اعرض النسخة المخزّنة محلياً فوراً (سريعة، وتعمل دون اتصال)
+  const cached = await getCachedMessages(conversationId);
+  if (cached.length) {
+    state.messages = cached;
+    renderMessages();
+  }
+
+  if (!state.isOnline) return; // ابقَ على النسخة المحلية إن لم يوجد اتصال
+
+  const { data, error } = await supabase
     .from("messages")
     .select("*")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
+
+  if (error) return; // فشل الشبكة رغم navigator.onLine — النسخة المحلية تبقى ظاهرة
+
   state.messages = data || [];
+  renderMessages();
+  await cacheMessages(conversationId, state.messages);
+}
+
+async function loadReactionsForConversation() {
+  state.reactions = {};
+  const ids = state.messages.map((m) => m.id);
+  if (!ids.length) return;
+  const { data } = await supabase.from("message_reactions").select("*").in("message_id", ids);
+  (data || []).forEach((r) => {
+    if (!state.reactions[r.message_id]) state.reactions[r.message_id] = [];
+    state.reactions[r.message_id].push(r);
+  });
   renderMessages();
 }
 
@@ -305,27 +446,153 @@ function renderMessages() {
   box.scrollTop = box.scrollHeight;
 }
 
+function findMessageById(id) {
+  return state.messages.find((m) => m.id === id);
+}
+
+function messagePreviewText(m) {
+  if (!m) return "";
+  if (m.content) return m.content;
+  if (m.attachment_type === "image") return "📷 صورة";
+  if (m.attachment_type === "audio") return "🎤 رسالة صوتية";
+  if (m.attachment_type === "file") return "📎 ملف";
+  return "";
+}
+
 function buildMessageBubble(m) {
   const mine = m.sender_id === state.me.id;
   const div = document.createElement("div");
   div.className = `bubble-row ${mine ? "mine" : "theirs"}`;
+  div.dataset.messageId = m.id;
+
   const time = new Date(m.created_at).toLocaleTimeString(state.lang === "ar" ? "ar-SA" : "en-US", {
     hour: "2-digit",
     minute: "2-digit",
   });
-  const ticks = mine ? renderTicks(m.status) : "";
-  const attach = m.attachment_url
-    ? m.attachment_type === "image"
-      ? `<img class="msg-attachment" src="${m.attachment_url}">`
-      : `<a class="msg-file" href="${m.attachment_url}" target="_blank">📎 ${state.t.attach}</a>`
+  const ticks = mine ? (m._pending ? '<span class="ticks">🕓</span>' : renderTicks(m.status)) : "";
+
+  const quoted = m.reply_to_id ? findMessageById(m.reply_to_id) : null;
+  const quotedHtml = quoted
+    ? `<div class="quoted-reply">${escapeHtml(messagePreviewText(quoted))}</div>`
     : "";
+
+  let attach = "";
+  if (m.attachment_url) {
+    if (m.attachment_type === "image") {
+      attach = `<img class="msg-attachment" src="${m.attachment_url}">`;
+    } else if (m.attachment_type === "audio") {
+      attach = `<audio class="msg-audio" controls src="${m.attachment_url}"></audio>`;
+    } else {
+      attach = `<a class="msg-file" href="${m.attachment_url}" target="_blank">📎 ${state.t.attach}</a>`;
+    }
+  }
+
+  const reactions = state.reactions[m.id] || [];
+  const grouped = {};
+  reactions.forEach((r) => {
+    grouped[r.emoji] = grouped[r.emoji] || { count: 0, mine: false };
+    grouped[r.emoji].count += 1;
+    if (r.user_id === state.me.id) grouped[r.emoji].mine = true;
+  });
+  const reactionsHtml = Object.keys(grouped).length
+    ? `<div class="reaction-bar">${Object.entries(grouped)
+        .map(
+          ([emoji, g]) =>
+            `<span class="reaction-chip ${g.mine ? "mine" : ""}" data-emoji="${emoji}">${emoji} ${g.count}</span>`
+        )
+        .join("")}</div>`
+    : "";
+
   div.innerHTML = `
     <div class="bubble">
+      <div class="bubble-actions">
+        <button class="bubble-action-reply" title="${state.t.reply}">↩</button>
+        <button class="bubble-action-react" title="React">😊</button>
+      </div>
+      ${quotedHtml}
       ${attach}
       ${m.content ? `<div class="bubble-text">${escapeHtml(m.content)}</div>` : ""}
       <div class="bubble-meta"><span class="bubble-time">${time}</span>${ticks}</div>
+      ${reactionsHtml}
+      <div class="quick-react-panel hidden"></div>
     </div>`;
+
+  div.querySelector(".bubble-action-reply").addEventListener("click", () => setReplyTarget(m));
+  const reactBtn = div.querySelector(".bubble-action-react");
+  const quickPanel = div.querySelector(".quick-react-panel");
+  const quickEmojis = ["❤️", "👍", "😂", "😮", "😢", "🙏"];
+  quickPanel.innerHTML = quickEmojis
+    .map((e) => `<span class="quick-react-opt" data-emoji="${e}">${e}</span>`)
+    .join("");
+  reactBtn.addEventListener("click", () => quickPanel.classList.toggle("hidden"));
+  quickPanel.addEventListener("click", (e) => {
+    const emoji = e.target.dataset.emoji;
+    if (emoji) {
+      toggleReaction(m.id, emoji);
+      quickPanel.classList.add("hidden");
+    }
+  });
+  div.querySelectorAll(".reaction-chip").forEach((chip) => {
+    chip.addEventListener("click", () => toggleReaction(m.id, chip.dataset.emoji));
+  });
+
+  wireSwipeToReply(div, m);
+
   return div;
+}
+
+// ---------------------------------------------------------------
+// SWIPE TO REPLY (touch devices)
+// ---------------------------------------------------------------
+function wireSwipeToReply(row, message) {
+  const bubble = row.querySelector(".bubble");
+  let startX = 0;
+  let startY = 0;
+  let dx = 0;
+  let dragging = false;
+  let horizontalLock = false;
+  const THRESHOLD = 60;
+
+  row.addEventListener("touchstart", (e) => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dx = 0;
+    dragging = true;
+    horizontalLock = false;
+  }, { passive: true });
+
+  row.addEventListener("touchmove", (e) => {
+    if (!dragging) return;
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - startX;
+    const deltaY = touch.clientY - startY;
+
+    if (!horizontalLock) {
+      if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+        horizontalLock = Math.abs(deltaX) > Math.abs(deltaY);
+      }
+      if (!horizontalLock) return;
+    }
+
+    e.preventDefault(); // امنع تمرير الصفحة رأسياً أثناء السحب الأفقي
+    dx = Math.max(-90, Math.min(90, deltaX));
+    bubble.style.transform = `translateX(${dx}px)`;
+    bubble.style.transition = "none";
+    row.classList.toggle("swipe-armed", Math.abs(dx) > THRESHOLD);
+  }, { passive: false });
+
+  row.addEventListener("touchend", () => {
+    if (!dragging) return;
+    dragging = false;
+    bubble.style.transition = "transform .2s ease";
+    bubble.style.transform = "translateX(0)";
+    row.classList.remove("swipe-armed");
+    if (horizontalLock && Math.abs(dx) > THRESHOLD) {
+      setReplyTarget(message);
+      if (navigator.vibrate) navigator.vibrate(15);
+    }
+    dx = 0;
+  });
 }
 
 function renderTicks(status) {
@@ -335,27 +602,115 @@ function renderTicks(status) {
 }
 
 // ---------------------------------------------------------------
+// REPLY
+// ---------------------------------------------------------------
+function setReplyTarget(m) {
+  state.replyingTo = m;
+  $("#reply-preview-text").textContent = messagePreviewText(m);
+  $("#reply-preview-bar").classList.remove("hidden");
+  $("#composer-input").focus();
+}
+
+function clearReply() {
+  state.replyingTo = null;
+  $("#reply-preview-bar")?.classList.add("hidden");
+}
+
+// ---------------------------------------------------------------
+// REACTIONS
+// ---------------------------------------------------------------
+async function toggleReaction(messageId, emoji) {
+  const existing = (state.reactions[messageId] || []).find(
+    (r) => r.user_id === state.me.id && r.emoji === emoji
+  );
+  if (existing) {
+    await supabase.from("message_reactions").delete().eq("id", existing.id);
+  } else {
+    await supabase.from("message_reactions").insert({
+      message_id: messageId,
+      user_id: state.me.id,
+      emoji,
+    });
+  }
+  await loadReactionsForConversation();
+}
+
+// ---------------------------------------------------------------
 // SEND MESSAGE / ATTACHMENTS
 // ---------------------------------------------------------------
 async function sendMessage({ content, attachmentUrl, attachmentType }) {
   const conv = state.activeConversation;
   if (!conv) return;
+  const replyToId = state.replyingTo?.id || null;
+
+  if (!state.isOnline) {
+    // لا يوجد اتصال: خزّن الرسالة محلياً في outbox واعرضها فوراً بحالة "قيد الإرسال"
+    const optimistic = {
+      id: `local-${Date.now()}`,
+      conversation_id: conv.id,
+      sender_id: state.me.id,
+      content: content || null,
+      attachment_url: attachmentUrl || null,
+      attachment_type: attachmentType || null,
+      reply_to_id: replyToId,
+      status: "pending",
+      created_at: new Date().toISOString(),
+      _pending: true,
+    };
+    state.messages.push(optimistic);
+    renderMessages();
+    await queueOutboxMessage({
+      conversation_id: conv.id,
+      sender_id: state.me.id,
+      content: content || null,
+      attachment_url: attachmentUrl || null,
+      attachment_type: attachmentType || null,
+      reply_to_id: replyToId,
+    });
+    clearReply();
+    return;
+  }
+
   const { error } = await supabase.from("messages").insert({
     conversation_id: conv.id,
     sender_id: state.me.id,
     content: content || null,
     attachment_url: attachmentUrl || null,
     attachment_type: attachmentType || null,
+    reply_to_id: replyToId,
     status: "sent",
   });
   if (error) { showAuthError(error.message); return; }
 
   await supabase
     .from("conversations")
-    .update({ last_message: content || "📎", last_message_at: new Date().toISOString() })
+    .update({ last_message: content || messagePreviewText({ attachment_type: attachmentType }), last_message_at: new Date().toISOString() })
     .eq("id", conv.id);
 
+  clearReply();
   await setTyping(false);
+}
+
+// يُنفَّذ عند عودة الاتصال: يرسل كل الرسائل المؤجلة في outbox بالترتيب
+async function flushOutbox() {
+  const pending = await getOutbox();
+  if (!pending.length) return;
+  for (const item of pending) {
+    const { local_id, queued_at, ...msg } = item;
+    const { error } = await supabase.from("messages").insert({ ...msg, status: "sent" });
+    if (!error) {
+      await removeFromOutbox(local_id);
+      await supabase
+        .from("conversations")
+        .update({ last_message: msg.content || messagePreviewText({ attachment_type: msg.attachment_type }), last_message_at: new Date().toISOString() })
+        .eq("id", msg.conversation_id);
+    }
+  }
+  // نظّف الفقاعات المؤقتة المعلّقة وأعد تحميل المحادثة الحالية من الخادم
+  if (state.activeConversation) {
+    state.messages = state.messages.filter((m) => !m._pending);
+    await loadMessages(state.activeConversation.id);
+  }
 }
 
 async function handleAttachmentUpload(e) {
@@ -395,11 +750,98 @@ async function handleWallpaperUpload(e) {
 }
 
 // ---------------------------------------------------------------
-// REALTIME: messages, typing, presence, read receipts
+// VOICE RECORDING (MIC)
+// ---------------------------------------------------------------
+async function toggleRecording() {
+  if (state.recording) {
+    await stopAndSendRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording() {
+  if (!state.activeConversation) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    showAuthError("التسجيل الصوتي غير مدعوم في هذا المتصفح");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    const chunks = [];
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.start();
+
+    state.recording = { mediaRecorder, chunks, stream, seconds: 0, timerInterval: null };
+    $("#recording-bar").classList.remove("hidden");
+    $("#composer-input").classList.add("hidden");
+    $("#mic-btn").textContent = "⏹";
+    $("#mic-btn").classList.add("recording-active");
+
+    state.recording.timerInterval = setInterval(() => {
+      state.recording.seconds += 1;
+      const mm = String(Math.floor(state.recording.seconds / 60)).padStart(2, "0");
+      const ss = String(state.recording.seconds % 60).padStart(2, "0");
+      $("#recording-timer").textContent = `${mm}:${ss}`;
+    }, 1000);
+  } catch (err) {
+    showAuthError("لم يتم منح إذن الوصول للميكروفون");
+  }
+}
+
+async function stopAndSendRecording() {
+  const rec = state.recording;
+  if (!rec) return;
+  const blob = await finalizeRecording(rec);
+  resetRecordingUI();
+  if (!blob) return;
+
+  const path = `${state.me.id}/voice_${Date.now()}.webm`;
+  const { error } = await supabase.storage.from("attachments").upload(path, blob, {
+    contentType: "audio/webm",
+  });
+  if (error) { showAuthError(error.message); return; }
+  const { data: pub } = supabase.storage.from("attachments").getPublicUrl(path);
+  await sendMessage({ content: null, attachmentUrl: pub.publicUrl, attachmentType: "audio" });
+}
+
+function cancelRecording() {
+  const rec = state.recording;
+  if (!rec) return;
+  finalizeRecording(rec, true);
+  resetRecordingUI();
+}
+
+function finalizeRecording(rec, discard) {
+  return new Promise((resolve) => {
+    clearInterval(rec.timerInterval);
+    rec.mediaRecorder.onstop = () => {
+      rec.stream.getTracks().forEach((t) => t.stop());
+      if (discard) return resolve(null);
+      resolve(new Blob(rec.chunks, { type: "audio/webm" }));
+    };
+    if (rec.mediaRecorder.state !== "inactive") rec.mediaRecorder.stop();
+    else resolve(null);
+  });
+}
+
+function resetRecordingUI() {
+  state.recording = null;
+  $("#recording-bar").classList.add("hidden");
+  $("#recording-timer").textContent = "00:00";
+  $("#composer-input").classList.remove("hidden");
+  $("#mic-btn").textContent = "🎤";
+  $("#mic-btn").classList.remove("recording-active");
+}
+
+// ---------------------------------------------------------------
+// REALTIME
 // ---------------------------------------------------------------
 function subscribeToConversation(conversationId) {
   if (state.msgChannel) supabase.removeChannel(state.msgChannel);
   if (state.typingChannel) supabase.removeChannel(state.typingChannel);
+  if (state.reactionsChannel) supabase.removeChannel(state.reactionsChannel);
 
   state.msgChannel = supabase
     .channel(`messages:${conversationId}`)
@@ -409,6 +851,7 @@ function subscribeToConversation(conversationId) {
       async (payload) => {
         state.messages.push(payload.new);
         renderMessages();
+        cacheMessages(conversationId, [payload.new]);
         if (payload.new.sender_id !== state.me.id) {
           playNotificationSound();
           await markConversationRead(conversationId);
@@ -438,6 +881,17 @@ function subscribeToConversation(conversationId) {
         }
       }
     )
+    .subscribe();
+
+  // إعادة تحميل التفاعلات عند أي تغيير (بدون فلترة لأن الجدول لا يحوي conversation_id)
+  state.reactionsChannel = supabase
+    .channel(`reactions:${conversationId}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, (payload) => {
+      const row = payload.new || payload.old;
+      if (row && state.messages.some((m) => m.id === row.message_id)) {
+        loadReactionsForConversation();
+      }
+    })
     .subscribe();
 }
 
@@ -481,7 +935,16 @@ function subscribeGlobalPresence() {
       state.onlineMap = {};
       Object.keys(presState).forEach((id) => (state.onlineMap[id] = true));
       loadContacts();
-      if (state.activeConversation) updatePresenceLabel(state.activeConversation.otherProfile.id);
+      if (state.activeConversation) refreshPresenceLabel(state.activeConversation.otherProfile.id);
+    })
+    .on("presence", { event: "leave" }, async ({ leftPresences }) => {
+      // عندما يغادر أحدهم، حدّث "آخر ظهور" فور حدوث ذلك محلياً لعرضها فوراً
+      if (state.activeConversation) {
+        const leftIds = leftPresences.map((p) => p.presence_ref && p.key).filter(Boolean);
+        if (leftIds.includes(state.activeConversation.otherProfile.id)) {
+          await refreshPresenceLabel(state.activeConversation.otherProfile.id);
+        }
+      }
     })
     .subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
@@ -490,17 +953,29 @@ function subscribeGlobalPresence() {
     });
 }
 
-function updatePresenceLabel(otherId) {
+async function refreshPresenceLabel(otherId) {
   const label = $("#chat-header-status");
   if (state.onlineMap[otherId]) {
     label.textContent = state.t.online;
+    return;
+  }
+  const { data: profile } = await supabase.from("profiles").select("last_seen").eq("id", otherId).single();
+  if (profile?.last_seen) {
+    const d = new Date(profile.last_seen);
+    const time = d.toLocaleTimeString(state.lang === "ar" ? "ar-SA" : "en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const dateLabel = d.toDateString() === new Date().toDateString()
+      ? time
+      : d.toLocaleDateString(state.lang === "ar" ? "ar-SA" : "en-US") + " " + time;
+    label.textContent = `${state.t.last_seen} ${dateLabel}`;
   } else {
     label.textContent = "";
   }
 }
 
 function subscribeInboxUpdates() {
-  // إعادة تحميل قائمة المحادثات عند وصول رسائل جديدة لأي محادثة يشارك فيها المستخدم
   supabase
     .channel("inbox-updates")
     .on(
@@ -522,7 +997,7 @@ function playNotificationSound() {
 }
 
 // ---------------------------------------------------------------
-// EMOJI PICKER (basic quick-pick)
+// EMOJI PICKER (composer)
 // ---------------------------------------------------------------
 function wireEmojiPicker() {
   const btn = $("#emoji-toggle");
@@ -544,7 +1019,7 @@ function wireEmojiPicker() {
 // ---------------------------------------------------------------
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/service-worker.js").catch((err) => console.log(err));
+    navigator.serviceWorker.register("./service-worker.js").catch(() => {});
   });
 }
 
