@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>محادثات</title>
+<link rel="manifest" href="./manifest.json" />
+<meta name="theme-color" content="#111b21" />
+<link rel="stylesheet" href="./css/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body data-theme="dark">
+
+<!-- ================= AUTH SCREEN ================= -->
+<div id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <h1 class="auth-logo">💬 <span data-i18n="app_name">محادثات</span></h1>
+
+    <div class="auth-tabs">
+      <button id="tab-login" class="active" data-i18n="login">تسجيل الدخول</button>
+      <button id="tab-signup" data-i18n="signup">إنشاء حساب</button>
+    </div>
+
+    <p id="auth-error" class="auth-error hidden"></p>
+
+    <form id="login-form" class="auth-form">
+      <input id="login-email" type="email" required data-i18n-placeholder="email" placeholder="البريد الإلكتروني" />
+      <input id="login-password" type="password" required data-i18n-placeholder="password" placeholder="كلمة المرور" />
+      <button type="submit" data-i18n="login_btn">دخول</button>
+    </form>
+
+    <form id="signup-form" class="auth-form hidden">
+      <input id="signup-name" type="text" required data-i18n-placeholder="display_name" placeholder="اسم المستخدم" />
+      <input id="signup-email" type="email" required data-i18n-placeholder="email" placeholder="البريد الإلكتروني" />
+      <input id="signup-phone" type="tel" data-i18n-placeholder="phone" placeholder="رقم الهاتف (اختياري)" />
+      <input id="signup-password" type="password" required minlength="6" data-i18n-placeholder="password" placeholder="كلمة المرور" />
+      <button type="submit" data-i18n="signup_btn">إنشاء الحساب</button>
+    </form>
+  </div>
+</div>
+
+<!-- ================= APP SHELL ================= -->
+<div id="app-shell" class="app-shell hidden">
+
+  <!-- Sidebar: contact / chat list -->
+  <aside id="sidebar" class="sidebar">
+    <header class="sidebar-header">
+      <div class="me">
+        <div class="avatar"><img id="my-avatar" src="" alt="" /></div>
+        <span id="my-name"></span>
+      </div>
+      <div class="sidebar-actions">
+        <button id="lang-toggle" title="Language">🌐</button>
+        <button id="theme-toggle" title="Theme">🌓</button>
+        <button id="btn-settings" title="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <div id="settings-panel" class="settings-panel hidden">
+      <label data-i18n="profile_picture">الصورة الشخصية</label>
+      <input id="avatar-input" type="file" accept="image/*" />
+      <label data-i18n="wallpaper">خلفية الدردشة</label>
+      <input id="wallpaper-input" type="file" accept="image/*" />
+      <button id="btn-logout" class="logout-btn" data-i18n="logout">تسجيل الخروج</button>
+    </div>
+
+    <div class="search-box">
+      <input type="text" data-i18n-placeholder="search" placeholder="بحث" />
+    </div>
+
+    <div id="contact-list-wrap">
+      <!-- المستخدم العادي: قائمة مسطحة -->
+      <div id="contact-list"></div>
+
+      <!-- المشرف: قسمان -->
+      <div id="admins-heading" class="section-heading" data-i18n="admins">المشرفون</div>
+      <div id="admins-section"></div>
+      <div id="users-heading" class="section-heading" data-i18n="chats">المحادثات</div>
+      <div id="users-section"></div>
+    </div>
+  </aside>
+
+  <!-- Chat panel -->
+  <section id="chat-panel" class="chat-panel">
+    <header class="chat-header">
+      <button id="back-to-list" class="back-btn">←</button>
+      <div class="avatar"><img id="chat-header-avatar" src="" alt="" /></div>
+      <div class="chat-header-info">
+        <div id="chat-header-name" class="chat-header-name"></div>
+        <div id="chat-header-status" class="chat-header-status"></div>
+        <div id="typing-indicator" class="typing-indicator hidden" data-i18n="typing">يكتب الآن...</div>
+      </div>
+    </header>
+
+    <div id="chat-messages" class="chat-messages"></div>
+
+    <form id="composer-form" class="composer">
+      <button type="button" id="emoji-toggle">😊</button>
+      <div id="emoji-panel" class="emoji-panel hidden"></div>
+      <label class="attach-btn">📎<input id="attach-input" type="file" hidden /></label>
+      <input id="composer-input" type="text" autocomplete="off" data-i18n-placeholder="type_message" placeholder="اكتب رسالة" />
+      <button type="submit" class="send-btn">➤</button>
+    </form>
+  </section>
+</div>
+
+<audio id="notification-sound" src="./icons/notify.mp3" preload="auto"></audio>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>
