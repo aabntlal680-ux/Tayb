@@ -1,14 +1,17 @@
-const CACHE_NAME = "wa-clone-shell-v1";
+const CACHE_NAME = "wa-clone-shell-v2";
 const APP_SHELL = [
-  "/",
-  "/index.html",
-  "/css/style.css",
-  "/js/app.js",
-  "/js/auth.js",
-  "/js/config.js",
-  "/js/i18n.js",
-  "/js/supabaseClient.js",
-  "/manifest.json",
+  "./",
+  "./index.html",
+  "./partials/chat-panel.html",
+  "./css/style.css",
+  "./js/app.js",
+  "./js/auth.js",
+  "./js/config.js",
+  "./js/i18n.js",
+  "./js/supabaseClient.js",
+  "./js/db.js",
+  "./js/push.js",
+  "./manifest.json",
 ];
 
 self.addEventListener("install", (event) => {
@@ -49,6 +52,41 @@ self.addEventListener("fetch", (event) => {
           })
           .catch(() => cached)
       );
+    })
+  );
+});
+
+// ---------------------------------------------------------------
+// WEB PUSH: عرض إشعار عند وصول push من Edge Function send-push
+// ---------------------------------------------------------------
+self.addEventListener("push", (event) => {
+  let data = { title: "رسالة جديدة", body: "" };
+  try {
+    data = event.data.json();
+  } catch (e) {
+    data.body = event.data ? event.data.text() : "";
+  }
+
+  const options = {
+    body: data.body,
+    icon: "./icons/icon-192.png",
+    badge: "./icons/icon-192.png",
+    dir: "auto",
+    data: { conversationId: data.conversationId },
+    vibrate: [100, 50, 100],
+  };
+
+  event.waitUntil(self.registration.showNotification(data.title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ("focus" in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow("./index.html");
     })
   );
 });
