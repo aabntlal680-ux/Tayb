@@ -2,8 +2,9 @@ import { supabase } from "./supabaseClient.js";
 import { isAdminEmail } from "./config.js";
 
 export async function signUp({ email, password, displayName, phone }) {
+  const normalizedEmail = email.trim().toLowerCase();
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: normalizedEmail,
     password,
     options: {
       data: { display_name: displayName, phone: phone || null },
@@ -18,7 +19,7 @@ export async function signUp({ email, password, displayName, phone }) {
       .upsert(
         {
           id: data.user.id,
-          email,
+          email: normalizedEmail,
           display_name: displayName,
           phone: phone || null,
           is_admin: isAdminEmail(email),
@@ -30,7 +31,10 @@ export async function signUp({ email, password, displayName, phone }) {
 }
 
 export async function signIn({ email, password }) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim().toLowerCase(),
+    password,
+  });
   if (error) throw error;
   await supabase
     .from("profiles")

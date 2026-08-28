@@ -42,7 +42,11 @@ const $ = (sel) => document.querySelector(sel);
 async function boot() {
   document.body.setAttribute("data-theme", state.theme);
 
-  await loadChatPanelPartial();
+  try {
+    await loadChatPanelPartial();
+  } catch (error) {
+    console.error("Failed to load chat panel:", error);
+  }
   state.t = applyLanguage(state.lang); // بعد حقن الجزء الديناميكي حتى تُطبَّق data-i18n عليه أيضاً
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -92,7 +96,11 @@ function updateOfflineBanner() {
 
 // تحميل واجهة المحادثة كملف HTML منفصل وحقنها في الصفحة
 async function loadChatPanelPartial() {
-  const res = await fetch("./partials/chat-panel.html");
+  const partialUrl = new URL("../partials/chat-panel.html", import.meta.url);
+  const res = await fetch(partialUrl, { cache: "no-cache" });
+  if (!res.ok) {
+    throw new Error(`تعذر تحميل واجهة المحادثة (${res.status})`);
+  }
   const html = await res.text();
   $("#chat-panel-container").innerHTML = html;
 }
@@ -164,8 +172,12 @@ function wireAuthForms() {
     const displayName = $("#signup-name").value.trim();
     const phone = $("#signup-phone").value.trim();
     try {
-      await signUp({ email, password, displayName, phone });
-      await signIn({ email, password });
+      const { session } = await signUp({ email, password, displayName, phone });
+      if (!session) {
+        showAuthError("تم إنشاء الحساب. تحقق من بريدك الإلكتروني ثم سجّل الدخول.");
+        switchAuthTab("login");
+        return;
+      }
       await enterApp();
     } catch (err) {
       showAuthError(err.message);
@@ -1048,7 +1060,7 @@ function wireEmojiPicker() {
 // ---------------------------------------------------------------
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js").catch(() => {});
   });
 }
 
