@@ -80,6 +80,7 @@ input { font-family: inherit; }
   display: flex; 
   height: 100vh;
   height: 100dvh;
+  width: 100%;
   max-width: 1600px; /* تحديد عرض أقصى للواجهة في الشاشات الكبيرة لتظهر كإطار محدود */
   margin: 0 auto;
   position: relative;
@@ -87,7 +88,7 @@ input { font-family: inherit; }
 }
 .sidebar {
   width: 400px; max-width: 40%;
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; flex-shrink: 0;
   border-inline-end: 1px solid rgba(134,150,160,.15);
   background: var(--wa-panel-dark);
 }
@@ -373,14 +374,15 @@ body[data-theme="light"] .composer { background: var(--wa-bg-light); }
 
 .emoji-panel {
   position: absolute; bottom: 60px; inset-inline-start: 10px;
-  background: var(--wa-panel-dark); border-radius: 10px; padding: 10px;
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;
+  background: var(--wa-panel-dark); border-radius: 10px; padding: 12x;
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
   box-shadow: 0 4px 20px rgba(0,0,0,.4); z-index: 10;
+  max-height: 220px; overflow-y: auto;
 }
 .emoji-opt { cursor: pointer; font-size: 20px; text-align: center; }
 
 /* ---------------- 3. RESPONSIVE (التجاوب الذكي للهواتف والأجهزة اللوحية) ---------------- */
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .app-shell { 
     border-radius: 0; 
     box-shadow: none; 
