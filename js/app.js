@@ -181,10 +181,21 @@ function switchAuthTab(which) {
 }
 
 function showAuthError(msg) {
-  const el = $("#auth-error");
-  el.textContent = msg || state.t.error_generic;
-  el.classList.remove("hidden");
-  setTimeout(() => el.classList.add("hidden"), 4000);
+  const text = msg || state.t?.error_generic || "حدث خطأ ما";
+  // إن كانت شاشة الدخول ظاهرة، اعرض الخطأ فيها؛ وإلا استخدم Toast عام يظهر فوق أي واجهة
+  const authScreenVisible = !$("#auth-screen").classList.contains("hidden");
+  if (authScreenVisible) {
+    const el = $("#auth-error");
+    el.textContent = text;
+    el.classList.remove("hidden");
+    setTimeout(() => el.classList.add("hidden"), 4000);
+  } else {
+    const toast = $("#global-toast");
+    toast.textContent = text;
+    toast.classList.remove("hidden");
+    clearTimeout(toast._hideTimeout);
+    toast._hideTimeout = setTimeout(() => toast.classList.add("hidden"), 5000);
+  }
 }
 
 // ---------------------------------------------------------------
@@ -358,46 +369,64 @@ function escapeHtml(str) {
 // CONVERSATION
 // ---------------------------------------------------------------
 async function openConversation(otherProfile) {
-  if (!otherProfile.id) return;
-
-  $("#chat-panel").classList.add("mobile-visible");
-  $("#sidebar").classList.add("mobile-hidden");
-  $("#chat-empty-state").classList.add("hidden");
-  $("#chat-active").classList.remove("hidden");
-  clearReply();
-
-  let conversationId = otherProfile._conversationId;
-  if (!conversationId) {
-    const userId = state.me.is_admin ? otherProfile.id : state.me.id;
-    const adminId = state.me.is_admin ? state.me.id : otherProfile.id;
-    const { data: existing } = await supabase
-      .from("conversations")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("admin_id", adminId)
-      .maybeSingle();
-    if (existing) {
-      conversationId = existing.id;
-    } else {
-      const { data: created, error } = await supabase
-        .from("conversations")
-        .insert({ user_id: userId, admin_id: adminId })
-        .select()
-        .single();
-      if (error) { showAuthError(error.message); return; }
-      conversationId = created.id;
-    }
+  if (!otherProfile.id) {
+    // هذا يحدث عندما يكون المشرف ضمن القائمة الثابتة في config.js لكنه لم يُنشئ
+    // حسابه بعد (لا يوجد صف مطابق في جدول profiles) — لذلك لا يوجد id لنبدأ به محادثة معه.
+    showAuthError("هذا المشرف لم يُنشئ حسابه في التطبيق بعد، لا يمكن بدء محادثة معه حالياً.");
+    return;
   }
 
-  state.activeConversation = { id: conversationId, otherProfile };
-  $("#chat-header-name").textContent = otherProfile.display_name;
-  $("#chat-header-avatar").src = otherProfile.avatar_url || "";
-  await refreshPresenceLabel(otherProfile.id);
+  try {
+    $("#chat-panel").classList.add("mobile-visible");
+    $("#sidebar").classList.add("mobile-hidden");
+    $("#chat-empty-state").classList.add("hidden");
+    $("#chat-active").classList.remove("hidden");
+    clearReply();
 
-  await loadMessages(conversationId);
-  await loadReactionsForConversation();
-  subscribeToConversation(conversationId);
-  await markConversationRead(conversationId);
+    let conversationId = otherProfile._conversationId;
+    if (!conversationId) {
+      const userId = state.me.is_admin ? otherProfile.id : state.me.id;
+      const adminId = state.me.is_admin ? state.me.id : otherProfile.id;
+      const { data: existing, error: selectErr } = await supabase
+        .from("conversations")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("admin_id", adminId)
+        .maybeSingle();
+      if (selectErr) throw selectErr;
+
+      if (existing) {
+        conversationId = existing.id;
+      } else {
+        const { data: created, error } = await supabase
+          .from("conversations")
+          .insert({ user_id: userId, admin_id: adminId })
+          .select()
+          .single();
+        if (error) throw error;
+        conversationId = created.id;
+      }
+    }
+
+    state.activeConversation = { id: conversationId, otherProfile };
+    $("#chat-header-name").textContent = otherProfile.display_name;
+    $("#chat-header-avatar").src = otherProfile.avatar_url || "";
+    await refreshPresenceLabel(otherProfile.id);
+
+    await loadMessages(conversationId);
+    await loadReactionsForConversation();
+    subscribeToConversation(conversationId);
+    await markConversationRead(conversationId);
+  } catch (err) {
+    console.error("openConversation failed:", err);
+    showAuthError(
+      "تعذّر فتح المحادثة: " + (err?.message || "خطأ غير معروف") +
+      " — تأكد من تشغيل sql/schema.sql بالكامل ومن صحة SUPABASE_URL/ANON_KEY في js/config.js"
+    );
+    // أعد عرض قائمة المحادثات في حال الفشل حتى لا تبقى الواجهة عالقة
+    $("#chat-panel").classList.remove("mobile-visible");
+    $("#sidebar").classList.remove("mobile-hidden");
+  }
 }
 
 async function loadMessages(conversationId) {
@@ -1019,7 +1048,7 @@ function wireEmojiPicker() {
 // ---------------------------------------------------------------
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch(() => {});
+    navigator.serviceWorker.register("/service-worker.js").catch(() => {});
   });
 }
 
