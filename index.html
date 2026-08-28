@@ -22,17 +22,11 @@
     <h1 class="auth-logo">💬 <span data-i18n="app_name">محادثات</span></h1>
 
     <div class="auth-tabs">
-      <button id="tab-login" type="button" data-i18n="login">تسجيل الدخول</button>
       <button id="tab-signup" type="button" class="active" data-i18n="signup">إنشاء حساب</button>
+      <button id="tab-login" type="button" data-i18n="login">تسجيل الدخول</button>
     </div>
 
     <p id="auth-error" class="auth-error hidden"></p>
-
-    <form id="login-form" class="auth-form">
-      <input id="login-email" type="email" required data-i18n-placeholder="email" placeholder="البريد الإلكتروني" />
-      <input id="login-password" type="password" required data-i18n-placeholder="password" placeholder="كلمة المرور" />
-      <button type="submit" data-i18n="login_btn">دخول</button>
-    </form>
 
     <form id="signup-form" class="auth-form hidden">
       <input id="signup-name" type="text" required data-i18n-placeholder="display_name" placeholder="اسم المستخدم" />
@@ -40,6 +34,12 @@
       <input id="signup-phone" type="tel" data-i18n-placeholder="phone" placeholder="رقم الهاتف (اختياري)" />
       <input id="signup-password" type="password" required minlength="6" data-i18n-placeholder="password" placeholder="كلمة المرور" />
       <button type="submit" data-i18n="signup_btn">إنشاء الحساب</button>
+    </form>
+
+    <form id="login-form" class="auth-form">
+      <input id="login-email" type="email" required data-i18n-placeholder="email" placeholder="البريد الإلكتروني" />
+      <input id="login-password" type="password" required data-i18n-placeholder="password" placeholder="كلمة المرور" />
+      <button type="submit" data-i18n="login_btn">دخول</button>
     </form>
   </div>
 </div>
