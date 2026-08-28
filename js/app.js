@@ -1,10 +1,3 @@
-window.addEventListener("error", (e) => {
-  alert("حدث خطأ في السكريبت: " + e.message + "\nفي الملف: " + e.filename + "\nالسطر: " + e.lineno);
-});
-window.addEventListener("unhandledrejection", (e) => {
-  alert("فشل طلب شبكي أو Promise: " + (e.reason?.message || e.reason));
-});
-
 import { supabase } from "./supabaseClient.js";
 import { signUp, signIn, signOut, getCurrentProfile } from "./auth.js";
 import { ADMINS } from "./config.js";
