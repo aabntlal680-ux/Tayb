@@ -1058,6 +1058,16 @@ function wireEmojiPicker() {
 // ---------------------------------------------------------------
 // PWA
 // ---------------------------------------------------------------
+// 1. مسح جميع الكاش المخزن سابقاً (Cache Storage)
+if ('caches' in window) {
+  caches.keys().then((names) => {
+    for (let name of names) {
+      caches.delete(name);
+    }
+  });
+}
+
+// 2. إعادة تسجيل الـ Service Worker ليعمل بنسخة نظيفة
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./service-worker.js").catch(() => {});
