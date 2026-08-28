@@ -1,17 +1,17 @@
 const CACHE_NAME = "wa-clone-shell-v2";
 const APP_SHELL = [
-  "./",
-  "./index.html",
-  "./partials/chat-panel.html",
-  "./css/style.css",
-  "./js/app.js",
-  "./js/auth.js",
-  "./js/config.js",
-  "./js/i18n.js",
-  "./js/supabaseClient.js",
-  "./js/db.js",
-  "./js/push.js",
-  "./manifest.json",
+  "/",
+  "/index.html",
+  "/partials/chat-panel.html",
+  "/css/style.css",
+  "/js/app.js",
+  "/js/auth.js",
+  "/js/config.js",
+  "/js/i18n.js",
+  "/js/supabaseClient.js",
+  "/js/db.js",
+  "/js/push.js",
+  "/manifest.json",
 ];
 
 self.addEventListener("install", (event) => {
@@ -86,7 +86,7 @@ self.addEventListener("notificationclick", (event) => {
       for (const client of clients) {
         if ("focus" in client) return client.focus();
       }
-      if (self.clients.openWindow) return self.clients.openWindow("./index.html");
+      if (self.clients.openWindow) return self.clients.openWindow("/index.html");
     })
   );
 });
