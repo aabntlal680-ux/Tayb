@@ -80,9 +80,9 @@ input { font-family: inherit; }
 }
 
 /* ---------------- APP SHELL ---------------- */
-.app-shell { display: flex; height: 100vh; }
+.app-shell { display: flex; max-width: 1600px; width: 100%; height: 100vh; }
 .sidebar {
-  width: 400px; max-width: 40%;
+  width: 100%; max-width: 40%;
   display: flex; flex-direction: column;
   border-inline-end: 1px solid rgba(134,150,160,.15);
   background: var(--wa-panel-dark);
@@ -115,14 +115,49 @@ body[data-theme="light"] .sidebar-header { background: var(--wa-bg-light); }
 }
 
 .settings-panel {
-  padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
-  background: rgba(0,0,0,.15); border-bottom: 1px solid rgba(134,150,160,.15);
+  padding: 16px; 
+  display: flex; 
+  flex-direction: column; 
+  gap: 12px;
+  background: var(--wa-panel-dark);
+  border: 1px solid rgba(134, 150, 160, 0.2);
+  border-radius: 12px;
+  margin: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
-.settings-panel label { font-size: 12px; color: var(--wa-text-secondary); }
+body[data-theme="light"] .settings-panel {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+.settings-panel label { font-size: 13px; font-weight: 600; color: var(--wa-text-secondary); }
+.settings-panel input[type="file"] {
+  font-size: 12px;
+  color: var(--wa-text-secondary);
+}
+.settings-panel button {
+  padding: 10px 14px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  transition: background 0.2s;
+}
+#btn-enable-push {
+  background: rgba(0, 168, 132, 0.15);
+  color: var(--wa-green);
+  border: 1px solid rgba(0, 168, 132, 0.3);
+}
+#btn-enable-push:hover { background: rgba(0, 168, 132, 0.25); }
+
 .logout-btn {
-  margin-top: 6px; padding: 10px; border: none; border-radius: 8px;
-  background: #ff6b6b; color: #fff; font-weight: 600;
+  margin-top: 4px; 
+  background: rgba(255, 107, 107, 0.15) !important; 
+  color: #ff6b6b !important;
+  border: 1px solid rgba(255, 107, 107, 0.3) !important;
 }
+.logout-btn:hover { background: rgba(255, 107, 107, 0.25) !important; }
+
 
 .search-box { padding: 8px 12px; }
 .search-box input {
@@ -196,7 +231,7 @@ body[data-theme="light"] .chat-header { background: var(--wa-bg-light); }
 .bubble-row.theirs::before { inset-inline-start: -28px; }
 .bubble-row.swipe-armed::before { opacity: 1; transform: translateY(-50%) scale(1); }
 .bubble {
-  max-width: 65%; padding: 8px 10px; border-radius: 10px; position: relative;
+  max-width: 75%; width: fit-content; padding: 8px 10px; border-radius: 10px; position: relative;
   background: var(--wa-bubble-theirs-dark); color: #e9edef; font-size: 14.5px;
   box-shadow: 0 1px 1px rgba(0,0,0,.3);
 }
@@ -209,7 +244,7 @@ body[data-theme="light"] .bubble-row.mine .bubble { background: var(--wa-bubble-
   font-size: 11px; color: var(--wa-text-secondary);
 }
 .ticks-read { color: #53bdeb; }
-.msg-attachment { max-width: 260px; border-radius: 8px; display: block; margin-bottom: 4px; }
+.msg-attachment { max-width: 100%; height: auto; border-radius: 8px; display: block; margin-bottom: 4px; }
 .msg-file { color: inherit; }
 .msg-audio { max-width: 240px; height: 36px; }
 
@@ -258,13 +293,13 @@ body[data-theme="light"] .quick-react-panel { background: #fff; }
 }
 body[data-theme="light"] .composer { background: var(--wa-bg-light); }
 .composer input[type="text"] {
-  flex: 1; padding: 12px 16px; border-radius: 24px; border: none;
+  flex: 1; min-width: 0; padding: 12px 16px; border-radius: 24px; border: none;
   background: rgba(134,150,160,.15); color: inherit; outline: none; font-size: 14.5px;
 }
 .composer button { background: none; border: none; font-size: 20px; color: var(--wa-text-secondary); }
-.send-btn { color: var(--wa-green) !important; font-size: 22px !important; }
-.attach-btn { display: flex; align-items: center; }
-.mic-btn { transition: color .15s, transform .15s; }
+.send-btn { color: var(--wa-green) !important; flex-shrink: 0; font-size: 22px !important; }
+.attach-btn { display: flex; flex-shrink: 0; align-items: center; }
+.mic-btn { transition: color .15s, transform .15s; flex-shrink: 0; }
 .mic-btn.recording-active { color: #ff6b6b !important; transform: scale(1.15); }
 
 /* Reply preview bar above composer */
