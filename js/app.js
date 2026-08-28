@@ -41,6 +41,7 @@ const $ = (sel) => document.querySelector(sel);
 // ---------------------------------------------------------------
 async function boot() {
   document.body.setAttribute("data-theme", state.theme);
+  wireAuthForms();
 
   try {
     await loadChatPanelPartial();
@@ -49,9 +50,16 @@ async function boot() {
   }
   state.t = applyLanguage(state.lang); // بعد حقن الجزء الديناميكي حتى تُطبَّق data-i18n عليه أيضاً
 
-  const { data: { session } } = await supabase.auth.getSession();
-  wireAuthForms();
-  wireChrome();
+  if (document.querySelector("#chat-panel")) wireChrome();
+
+  let session = null;
+  try {
+    const result = await supabase.auth.getSession();
+    session = result.data.session;
+  } catch (error) {
+    console.error("Failed to restore session:", error);
+    showAuthError("تعذر الاتصال بخدمة الدخول. تحقق من الإنترنت وحاول مرة أخرى.");
+  }
 
   if (session) {
     await enterApp();
@@ -150,10 +158,16 @@ function startHeartbeat() {
 // AUTH FORMS
 // ---------------------------------------------------------------
 function wireAuthForms() {
-  $("#tab-login").addEventListener("click", () => switchAuthTab("login"));
-  $("#tab-signup").addEventListener("click", () => switchAuthTab("signup"));
+  const loginTab = $("#tab-login");
+  const signupTab = $("#tab-signup");
+  const loginForm = $("#login-form");
+  const signupForm = $("#signup-form");
+  if (!loginTab || !signupTab || !loginForm || !signupForm) return;
 
-  $("#login-form").addEventListener("submit", async (e) => {
+  loginTab.addEventListener("click", () => switchAuthTab("login"));
+  signupTab.addEventListener("click", () => switchAuthTab("signup"));
+
+  loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = $("#login-email").value.trim();
     const password = $("#login-password").value;
@@ -165,7 +179,7 @@ function wireAuthForms() {
     }
   });
 
-  $("#signup-form").addEventListener("submit", async (e) => {
+  signupForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = $("#signup-email").value.trim();
     const password = $("#signup-password").value;
@@ -214,8 +228,13 @@ function showAuthError(msg) {
 // CHROME
 // ---------------------------------------------------------------
 function wireChrome() {
-  $("#btn-settings").addEventListener("click", () => $("#settings-panel").classList.toggle("hidden"));
-  $("#btn-logout").addEventListener("click", async () => {
+  const settingsButton = $("#btn-settings");
+  const settingsPanel = $("#settings-panel");
+  const logoutButton = $("#btn-logout");
+  if (!settingsButton || !settingsPanel || !logoutButton) return;
+
+  settingsButton.addEventListener("click", () => settingsPanel.classList.toggle("hidden"));
+  logoutButton.addEventListener("click", async () => {
     await signOut(state.me?.id);
     location.reload();
   });
@@ -246,17 +265,21 @@ function wireChrome() {
 
 // كل ما يخص لوحة المحادثة (تُحقن ديناميكياً، لذلك نربطها بعد loadChatPanelPartial)
 function wireChatPanel() {
-  $("#composer-form").addEventListener("submit", async (e) => {
+  const composerForm = $("#composer-form");
+  const composerInput = $("#composer-input");
+  if (!composerForm || !composerInput) return;
+
+  composerForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const input = $("#composer-input");
+    const input = composerInput;
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
     await sendMessage({ content: text });
   });
 
-  $("#composer-input").addEventListener("input", handleTypingInput);
-  $("#attach-input").addEventListener("change", handleAttachmentUpload);
+  composerInput.addEventListener("input", handleTypingInput);
+  $("#attach-input")?.addEventListener("change", handleAttachmentUpload);
 
   $("#back-to-list").addEventListener("click", () => {
     $("#chat-panel").classList.remove("mobile-visible");
@@ -1043,6 +1066,7 @@ function playNotificationSound() {
 function wireEmojiPicker() {
   const btn = $("#emoji-toggle");
   const panel = $("#emoji-panel");
+  if (!btn || !panel) return;
   const emojis = ["😀","😂","😍","😢","😮","🙏","👍","❤️","🔥","🎉","😅","😎"];
   panel.innerHTML = emojis.map((e) => `<span class="emoji-opt">${e}</span>`).join("");
   btn.addEventListener("click", () => panel.classList.toggle("hidden"));
