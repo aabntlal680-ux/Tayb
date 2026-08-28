@@ -69,8 +69,8 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: data.body,
-    icon: "./icons/icon-192.png",
-    badge: "./icons/icon-192.png",
+    icon: "./icons/icon1.png",
+    badge: "./icons/icon1.png",
     dir: "auto",
     data: { conversationId: data.conversationId },
     vibrate: [100, 50, 100],
