@@ -1,18 +1,18 @@
 const CACHE_NAME = "wa-clone-shell-v2";
 const APP_SHELL = [
-  "/",
-  "/index.html",
-  "/partials/chat-panel.html",
-  "/css/style.css",
-  "/js/app.js",
-  "/js/auth.js",
-  "/js/config.js",
-  "/js/i18n.js",
-  "/js/supabaseClient.js",
-  "/js/db.js",
-  "/js/push.js",
-  "/manifest.json",
-];
+  "./",
+  "./index.html",
+  "./partials/chat-panel.html",
+  "./css/style.css",
+  "./js/app.js",
+  "./js/auth.js",
+  "./js/config.js",
+  "./js/i18n.js",
+  "./js/supabaseClient.js",
+  "./js/db.js",
+  "./js/push.js",
+  "./manifest.json",
+].map((path) => new URL(path, self.registration.scope).toString());
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -36,7 +36,7 @@ self.addEventListener("fetch", (event) => {
   const isSupabase = url.hostname.endsWith(".supabase.co");
 
   if (isSupabase) {
-    event.respondWith(fetch(event.request).catch(() => new Response(null, { status: 503 })));
+    event.respondWith(fetch(event.request));
     return;
   }
 
@@ -86,7 +86,9 @@ self.addEventListener("notificationclick", (event) => {
       for (const client of clients) {
         if ("focus" in client) return client.focus();
       }
-      if (self.clients.openWindow) return self.clients.openWindow("/index.html");
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(new URL("./index.html", self.registration.scope));
+      }
     })
   );
 });
