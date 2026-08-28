@@ -55,14 +55,19 @@ async function boot() {
   let session = null;
   try {
     const result = await supabase.auth.getSession();
-    session = result.data.session;
+    session = result?.data?.session || null;
   } catch (error) {
     console.error("Failed to restore session:", error);
     showAuthError("تعذر الاتصال بخدمة الدخول. تحقق من الإنترنت وحاول مرة أخرى.");
   }
 
   if (session) {
-    await enterApp();
+    try {
+      await enterApp();
+    } catch (err) {
+      console.error("Failed to enter app:", err);
+      showAuthScreen();
+    }
   } else {
     showAuthScreen();
   }
@@ -70,17 +75,19 @@ async function boot() {
   window.addEventListener("beforeunload", () => {
     if (state.me) {
       navigator.sendBeacon &&
-        navigator.sendBeacon(
-          "about:blank" // no-op fallback; real update happens in visibilitychange below when supported
-        );
+        navigator.sendBeacon("about:blank");
     }
   });
   document.addEventListener("visibilitychange", async () => {
     if (!state.me) return;
-    if (document.visibilityState === "hidden") {
-      await touchLastSeen(false);
-    } else {
-      await touchLastSeen(true);
+    try {
+      if (document.visibilityState === "hidden") {
+        await touchLastSeen(false);
+      } else {
+        await touchLastSeen(true);
+      }
+    } catch (err) {
+      console.warn("Visibility change update error:", err);
     }
   });
 
@@ -104,53 +111,97 @@ function updateOfflineBanner() {
 
 // تحميل واجهة المحادثة كملف HTML منفصل وحقنها في الصفحة
 async function loadChatPanelPartial() {
-  const partialUrl = new URL("../partials/chat-panel.html", import.meta.url);
-  const res = await fetch(partialUrl, { cache: "no-cache" });
-  if (!res.ok) {
-    throw new Error(`تعذر تحميل واجهة المحادثة (${res.status})`);
+  try {
+    const partialUrl = new URL("../partials/chat-panel.html", import.meta.url);
+    const res = await fetch(partialUrl, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`تعذر تحميل واجهة المحادثة (${res.status})`);
+    }
+    const html = await res.text();
+    const container = $("#chat-panel-container");
+    if (container) container.innerHTML = html;
+  } catch (err) {
+    console.error("loadChatPanelPartial error:", err);
+    throw err;
   }
-  const html = await res.text();
-  $("#chat-panel-container").innerHTML = html;
 }
 
 function showAuthScreen() {
-  $("#auth-screen").classList.remove("hidden");
-  $("#app-shell").classList.add("hidden");
+  const authEl = $("#auth-screen");
+  const appEl = $("#app-shell");
+  if (authEl) authEl.classList.remove("hidden");
+  if (appEl) appEl.classList.add("hidden");
 }
 
 async function enterApp() {
-  state.me = await getCurrentProfile();
+  try {
+    state.me = await getCurrentProfile();
+  } catch (err) {
+    console.error("getCurrentProfile error:", err);
+    state.me = null;
+  }
+  
   if (!state.me) {
     showAuthScreen();
     return;
   }
-  $("#auth-screen").classList.add("hidden");
-  $("#app-shell").classList.remove("hidden");
-  $("#my-name").textContent = state.me.display_name;
-  if (state.me.avatar_url) $("#my-avatar").src = state.me.avatar_url;
+  
+  const authEl = $("#auth-screen");
+  const appEl = $("#app-shell");
+  const myName = $("#my-name");
+  const myAvatar = $("#my-avatar");
+
+  if (authEl) authEl.classList.add("hidden");
+  if (appEl) appEl.classList.remove("hidden");
+  if (myName) myName.textContent = state.me.display_name;
+  if (myAvatar && state.me.avatar_url) myAvatar.src = state.me.avatar_url;
+  
   applyThemeVars();
 
-  await touchLastSeen(true);
+  try {
+    await touchLastSeen(true);
+  } catch (e) {}
+
   startHeartbeat();
 
-  await loadContacts();
-  subscribeGlobalPresence();
-  subscribeInboxUpdates();
-  if (state.isOnline) flushOutbox();
+  try {
+    await loadContacts();
+  } catch (e) {
+    console.warn("loadContacts error during enterApp:", e);
+  }
+
+  try {
+    subscribeGlobalPresence();
+    subscribeInboxUpdates();
+  } catch (e) {
+    console.warn("Subscriptions error:", e);
+  }
+
+  if (state.isOnline) {
+    try {
+      await flushOutbox();
+    } catch (e) {}
+  }
 }
 
 async function touchLastSeen(online) {
   if (!state.me) return;
-  await supabase
-    .from("profiles")
-    .update({ is_online: online, last_seen: new Date().toISOString() })
-    .eq("id", state.me.id);
+  try {
+    await supabase
+      .from("profiles")
+      .update({ is_online: online, last_seen: new Date().toISOString() })
+      .eq("id", state.me.id);
+  } catch (err) {
+    console.warn("touchLastSeen error:", err);
+  }
 }
 
 function startHeartbeat() {
   clearInterval(state.heartbeatInterval);
   state.heartbeatInterval = setInterval(() => {
-    if (document.visibilityState === "visible") touchLastSeen(true);
+    if (document.visibilityState === "visible") {
+      touchLastSeen(true).catch(() => {});
+    }
   }, 25000);
 }
 
@@ -169,8 +220,8 @@ function wireAuthForms() {
 
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const email = $("#login-email").value.trim();
-    const password = $("#login-password").value;
+    const email = $("#login-email")?.value.trim();
+    const password = $("#login-password")?.value;
     try {
       await signIn({ email, password });
       await enterApp();
@@ -181,10 +232,10 @@ function wireAuthForms() {
 
   signupForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const email = $("#signup-email").value.trim();
-    const password = $("#signup-password").value;
-    const displayName = $("#signup-name").value.trim();
-    const phone = $("#signup-phone").value.trim();
+    const email = $("#signup-email")?.value.trim();
+    const password = $("#signup-password")?.value;
+    const displayName = $("#signup-name")?.value.trim();
+    const phone = $("#signup-phone")?.value.trim();
     try {
       const { session } = await signUp({ email, password, displayName, phone });
       if (!session) {
@@ -200,27 +251,37 @@ function wireAuthForms() {
 }
 
 function switchAuthTab(which) {
-  $("#tab-login").classList.toggle("active", which === "login");
-  $("#tab-signup").classList.toggle("active", which === "signup");
-  $("#login-form").classList.toggle("hidden", which !== "login");
-  $("#signup-form").classList.toggle("hidden", which !== "signup");
+  const tabLogin = $("#tab-login");
+  const tabSignup = $("#tab-signup");
+  const formLogin = $("#login-form");
+  const formSignup = $("#signup-form");
+
+  if (tabLogin) tabLogin.classList.toggle("active", which === "login");
+  if (tabSignup) tabSignup.classList.toggle("active", which === "signup");
+  if (formLogin) formLogin.classList.toggle("hidden", which !== "login");
+  if (formSignup) formSignup.classList.toggle("hidden", which !== "signup");
 }
 
 function showAuthError(msg) {
   const text = msg || state.t?.error_generic || "حدث خطأ ما";
-  // إن كانت شاشة الدخول ظاهرة، اعرض الخطأ فيها؛ وإلا استخدم Toast عام يظهر فوق أي واجهة
-  const authScreenVisible = !$("#auth-screen").classList.contains("hidden");
+  const authScreen = $("#auth-screen");
+  const authScreenVisible = authScreen && !authScreen.classList.contains("hidden");
+  
   if (authScreenVisible) {
     const el = $("#auth-error");
-    el.textContent = text;
-    el.classList.remove("hidden");
-    setTimeout(() => el.classList.add("hidden"), 4000);
+    if (el) {
+      el.textContent = text;
+      el.classList.remove("hidden");
+      setTimeout(() => el.classList.add("hidden"), 4000);
+    }
   } else {
     const toast = $("#global-toast");
-    toast.textContent = text;
-    toast.classList.remove("hidden");
-    clearTimeout(toast._hideTimeout);
-    toast._hideTimeout = setTimeout(() => toast.classList.add("hidden"), 5000);
+    if (toast) {
+      toast.textContent = text;
+      toast.classList.remove("hidden");
+      clearTimeout(toast._hideTimeout);
+      toast._hideTimeout = setTimeout(() => toast.classList.add("hidden"), 5000);
+    }
   }
 }
 
@@ -235,35 +296,43 @@ function wireChrome() {
 
   settingsButton.addEventListener("click", () => settingsPanel.classList.toggle("hidden"));
   logoutButton.addEventListener("click", async () => {
-    await signOut(state.me?.id);
+    try {
+      await signOut(state.me?.id);
+    } catch (err) {
+      console.warn("Signout error:", err);
+    }
     location.reload();
   });
 
-  $("#lang-toggle").addEventListener("click", () => {
+  $("#lang-toggle")?.addEventListener("click", () => {
     state.lang = state.lang === "ar" ? "en" : "ar";
     localStorage.setItem("wa_lang", state.lang);
     state.t = applyLanguage(state.lang);
   });
 
-  $("#theme-toggle").addEventListener("click", () => {
+  $("#theme-toggle")?.addEventListener("click", () => {
     state.theme = state.theme === "dark" ? "light" : "dark";
     localStorage.setItem("wa_theme", state.theme);
     document.body.setAttribute("data-theme", state.theme);
     applyThemeVars();
   });
 
-  $("#avatar-input").addEventListener("change", handleAvatarUpload);
-  $("#wallpaper-input").addEventListener("change", handleWallpaperUpload);
-  $("#btn-enable-push").addEventListener("click", async () => {
-    const ok = await enablePushNotifications(state.me.id);
-    showAuthError(ok ? "تم تفعيل الإشعارات ✅" : "تعذّر التفعيل — تحقق من إذن المتصفح أو مفتاح VAPID");
+  $("#avatar-input")?.addEventListener("change", handleAvatarUpload);
+  $("#wallpaper-input")?.addEventListener("change", handleWallpaperUpload);
+  $("#btn-enable-push")?.addEventListener("click", async () => {
+    try {
+      const ok = await enablePushNotifications(state.me.id);
+      showAuthError(ok ? "تم تفعيل الإشعارات ✅" : "تعذّر التفعيل — تحقق من إذن المتصفح أو مفتاح VAPID");
+    } catch (err) {
+      showAuthError("خطأ عند تفعيل الإشعارات: " + err.message);
+    }
   });
 
   wireChatPanel();
   wireEmojiPicker();
 }
 
-// كل ما يخص لوحة المحادثة (تُحقن ديناميكياً، لذلك نربطها بعد loadChatPanelPartial)
+// كل ما يخص لوحة المحادثة
 function wireChatPanel() {
   const composerForm = $("#composer-form");
   const composerInput = $("#composer-input");
@@ -275,26 +344,31 @@ function wireChatPanel() {
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    await sendMessage({ content: text });
+    try {
+      await sendMessage({ content: text });
+    } catch (err) {
+      showAuthError(err.message);
+    }
   });
 
   composerInput.addEventListener("input", handleTypingInput);
   $("#attach-input")?.addEventListener("change", handleAttachmentUpload);
 
-  $("#back-to-list").addEventListener("click", () => {
-    $("#chat-panel").classList.remove("mobile-visible");
-    $("#sidebar").classList.remove("mobile-hidden");
+  $("#back-to-list")?.addEventListener("click", () => {
+    $("#chat-panel")?.classList.remove("mobile-visible");
+    $("#sidebar")?.classList.remove("mobile-hidden");
   });
 
-  $("#reply-preview-cancel").addEventListener("click", clearReply);
+  $("#reply-preview-cancel")?.addEventListener("click", clearReply);
 
-  $("#mic-btn").addEventListener("click", toggleRecording);
-  $("#recording-cancel").addEventListener("click", cancelRecording);
+  $("#mic-btn")?.addEventListener("click", toggleRecording);
+  $("#recording-cancel")?.addEventListener("click", cancelRecording);
 }
 
 function applyThemeVars() {
   if (state.me?.wallpaper_url) {
-    $("#chat-messages").style.backgroundImage = `url(${state.me.wallpaper_url})`;
+    const box = $("#chat-messages");
+    if (box) box.style.backgroundImage = `url(${state.me.wallpaper_url})`;
   }
 }
 
@@ -303,47 +377,57 @@ function applyThemeVars() {
 // ---------------------------------------------------------------
 async function loadContacts() {
   if (!state.isOnline) {
-    const cached = await getCachedContacts();
-    renderContactsFromCache(cached);
+    try {
+      const cached = await getCachedContacts();
+      renderContactsFromCache(cached || []);
+    } catch (e) {
+      console.warn("Error loading cached contacts:", e);
+    }
     return;
   }
   try {
     await loadContactsFromNetwork();
   } catch (err) {
-    const cached = await getCachedContacts();
-    renderContactsFromCache(cached);
+    console.warn("loadContactsFromNetwork failed, falling back to cache:", err);
+    try {
+      const cached = await getCachedContacts();
+      renderContactsFromCache(cached || []);
+    } catch (e) {}
   }
 }
 
 function renderContactsFromCache(cached) {
-  $("#contact-list").innerHTML = "";
-  $("#admins-heading").classList.add("hidden");
-  $("#admins-section").classList.add("hidden");
-  $("#users-heading").classList.add("hidden");
-  $("#users-section").classList.add("hidden");
-  cached.forEach((c) => $("#contact-list").appendChild(buildContactRow(c, { withUnread: !!c._unread })));
+  const list = $("#contact-list");
+  if (!list) return;
+  list.innerHTML = "";
+  $("#admins-heading")?.classList.add("hidden");
+  $("#admins-section")?.classList.add("hidden");
+  $("#users-heading")?.classList.add("hidden");
+  $("#users-section")?.classList.add("hidden");
+  cached.forEach((c) => list.appendChild(buildContactRow(c, { withUnread: !!c._unread })));
 }
 
 async function loadContactsFromNetwork() {
+  const list = $("#contact-list");
   if (!state.me.is_admin) {
     const { data: adminProfiles } = await supabase
       .from("profiles")
       .select("*")
       .in("email", ADMINS.map((a) => a.email));
     state.contacts = adminProfiles || [];
-    $("#contact-list").innerHTML = "";
-    $("#admins-heading").classList.add("hidden");
-    $("#admins-section").classList.add("hidden");
-    $("#users-heading").classList.add("hidden");
-    $("#users-section").classList.add("hidden");
-    state.contacts.forEach((c) => $("#contact-list").appendChild(buildContactRow(c, { withUnread: false })));
+    if (list) list.innerHTML = "";
+    $("#admins-heading")?.classList.add("hidden");
+    $("#admins-section")?.classList.add("hidden");
+    $("#users-heading")?.classList.add("hidden");
+    $("#users-section")?.classList.add("hidden");
+    state.contacts.forEach((c) => list && list.appendChild(buildContactRow(c, { withUnread: false })));
     await cacheContacts(state.contacts);
   } else {
-    $("#contact-list").innerHTML = "";
-    $("#admins-heading").classList.remove("hidden");
-    $("#admins-section").classList.remove("hidden");
-    $("#users-heading").classList.remove("hidden");
-    $("#users-section").classList.remove("hidden");
+    if (list) list.innerHTML = "";
+    $("#admins-heading")?.classList.remove("hidden");
+    $("#admins-section")?.classList.remove("hidden");
+    $("#users-heading")?.classList.remove("hidden");
+    $("#users-section")?.classList.remove("hidden");
 
     const { data: otherAdmins } = await supabase
       .from("profiles")
@@ -368,10 +452,17 @@ async function loadContactsFromNetwork() {
       userContacts.push({ ...c.user, _conversationId: c.id, _unread: count || 0, _lastMessage: c.last_message });
     }
 
-    $("#admins-section").innerHTML = "";
-    (otherAdmins || []).forEach((c) => $("#admins-section").appendChild(buildContactRow(c, { withUnread: false })));
-    $("#users-section").innerHTML = "";
-    userContacts.forEach((c) => $("#users-section").appendChild(buildContactRow(c, { withUnread: true })));
+    const adminsSec = $("#admins-section");
+    const usersSec = $("#users-section");
+
+    if (adminsSec) {
+      adminsSec.innerHTML = "";
+      (otherAdmins || []).forEach((c) => adminsSec.appendChild(buildContactRow(c, { withUnread: false })));
+    }
+    if (usersSec) {
+      usersSec.innerHTML = "";
+      userContacts.forEach((c) => usersSec.appendChild(buildContactRow(c, { withUnread: true })));
+    }
     await cacheContacts([...(otherAdmins || []), ...userContacts]);
   }
 }
@@ -405,17 +496,15 @@ function escapeHtml(str) {
 // ---------------------------------------------------------------
 async function openConversation(otherProfile) {
   if (!otherProfile.id) {
-    // هذا يحدث عندما يكون المشرف ضمن القائمة الثابتة في config.js لكنه لم يُنشئ
-    // حسابه بعد (لا يوجد صف مطابق في جدول profiles) — لذلك لا يوجد id لنبدأ به محادثة معه.
     showAuthError("هذا المشرف لم يُنشئ حسابه في التطبيق بعد، لا يمكن بدء محادثة معه حالياً.");
     return;
   }
 
   try {
-    $("#chat-panel").classList.add("mobile-visible");
-    $("#sidebar").classList.add("mobile-hidden");
-    $("#chat-empty-state").classList.add("hidden");
-    $("#chat-active").classList.remove("hidden");
+    $("#chat-panel")?.classList.add("mobile-visible");
+    $("#sidebar")?.classList.add("mobile-hidden");
+    $("#chat-empty-state")?.classList.add("hidden");
+    $("#chat-active")?.classList.remove("hidden");
     clearReply();
 
     let conversationId = otherProfile._conversationId;
@@ -444,10 +533,12 @@ async function openConversation(otherProfile) {
     }
 
     state.activeConversation = { id: conversationId, otherProfile };
-    $("#chat-header-name").textContent = otherProfile.display_name;
-    $("#chat-header-avatar").src = otherProfile.avatar_url || "";
-    await refreshPresenceLabel(otherProfile.id);
+    const hName = $("#chat-header-name");
+    const hAvatar = $("#chat-header-avatar");
+    if (hName) hName.textContent = otherProfile.display_name;
+    if (hAvatar) hAvatar.src = otherProfile.avatar_url || "";
 
+    await refreshPresenceLabel(otherProfile.id);
     await loadMessages(conversationId);
     await loadReactionsForConversation();
     subscribeToConversation(conversationId);
@@ -458,52 +549,63 @@ async function openConversation(otherProfile) {
       "تعذّر فتح المحادثة: " + (err?.message || "خطأ غير معروف") +
       " — تأكد من تشغيل sql/schema.sql بالكامل ومن صحة SUPABASE_URL/ANON_KEY في js/config.js"
     );
-    // أعد عرض قائمة المحادثات في حال الفشل حتى لا تبقى الواجهة عالقة
-    $("#chat-panel").classList.remove("mobile-visible");
-    $("#sidebar").classList.remove("mobile-hidden");
+    $("#chat-panel")?.classList.remove("mobile-visible");
+    $("#sidebar")?.classList.remove("mobile-hidden");
   }
 }
 
 async function loadMessages(conversationId) {
-  // اعرض النسخة المخزّنة محلياً فوراً (سريعة، وتعمل دون اتصال)
-  const cached = await getCachedMessages(conversationId);
-  if (cached.length) {
-    state.messages = cached;
-    renderMessages();
+  try {
+    const cached = await getCachedMessages(conversationId);
+    if (cached && cached.length) {
+      state.messages = cached;
+      renderMessages();
+    }
+  } catch (e) {
+    console.warn("getCachedMessages error:", e);
   }
 
-  if (!state.isOnline) return; // ابقَ على النسخة المحلية إن لم يوجد اتصال
+  if (!state.isOnline) return;
 
-  const { data, error } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true });
+  try {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true });
 
-  if (error) return; // فشل الشبكة رغم navigator.onLine — النسخة المحلية تبقى ظاهرة
+    if (error) return;
 
-  state.messages = data || [];
-  renderMessages();
-  await cacheMessages(conversationId, state.messages);
+    state.messages = data || [];
+    renderMessages();
+    await cacheMessages(conversationId, state.messages);
+  } catch (err) {
+    console.warn("loadMessages network error:", err);
+  }
 }
 
 async function loadReactionsForConversation() {
   state.reactions = {};
   const ids = state.messages.map((m) => m.id);
   if (!ids.length) return;
-  const { data } = await supabase.from("message_reactions").select("*").in("message_id", ids);
-  (data || []).forEach((r) => {
-    if (!state.reactions[r.message_id]) state.reactions[r.message_id] = [];
-    state.reactions[r.message_id].push(r);
-  });
-  renderMessages();
+  try {
+    const { data } = await supabase.from("message_reactions").select("*").in("message_id", ids);
+    (data || []).forEach((r) => {
+      if (!state.reactions[r.message_id]) state.reactions[r.message_id] = [];
+      state.reactions[r.message_id].push(r);
+    });
+    renderMessages();
+  } catch (err) {
+    console.warn("loadReactionsForConversation error:", err);
+  }
 }
 
 function renderMessages() {
   const box = $("#chat-messages");
+  if (!box) return;
   box.innerHTML = "";
   if (!state.messages.length) {
-    box.innerHTML = `<div class="empty-chat">${state.t.no_messages}</div>`;
+    box.innerHTML = `<div class="empty-chat">${state.t?.no_messages || "لا توجد رسائل"}</div>`;
     return;
   }
   state.messages.forEach((m) => box.appendChild(buildMessageBubble(m)));
@@ -547,7 +649,7 @@ function buildMessageBubble(m) {
     } else if (m.attachment_type === "audio") {
       attach = `<audio class="msg-audio" controls src="${m.attachment_url}"></audio>`;
     } else {
-      attach = `<a class="msg-file" href="${m.attachment_url}" target="_blank">📎 ${state.t.attach}</a>`;
+      attach = `<a class="msg-file" href="${m.attachment_url}" target="_blank">📎 ${state.t?.attach || "ملف"}</a>`;
     }
   }
 
@@ -570,7 +672,7 @@ function buildMessageBubble(m) {
   div.innerHTML = `
     <div class="bubble">
       <div class="bubble-actions">
-        <button class="bubble-action-reply" title="${state.t.reply}">↩</button>
+        <button class="bubble-action-reply" title="${state.t?.reply || "رد"}">↩</button>
         <button class="bubble-action-react" title="React">😊</button>
       </div>
       ${quotedHtml}
@@ -581,21 +683,23 @@ function buildMessageBubble(m) {
       <div class="quick-react-panel hidden"></div>
     </div>`;
 
-  div.querySelector(".bubble-action-reply").addEventListener("click", () => setReplyTarget(m));
+  div.querySelector(".bubble-action-reply")?.addEventListener("click", () => setReplyTarget(m));
   const reactBtn = div.querySelector(".bubble-action-react");
   const quickPanel = div.querySelector(".quick-react-panel");
   const quickEmojis = ["❤️", "👍", "😂", "😮", "😢", "🙏"];
-  quickPanel.innerHTML = quickEmojis
-    .map((e) => `<span class="quick-react-opt" data-emoji="${e}">${e}</span>`)
-    .join("");
-  reactBtn.addEventListener("click", () => quickPanel.classList.toggle("hidden"));
-  quickPanel.addEventListener("click", (e) => {
-    const emoji = e.target.dataset.emoji;
-    if (emoji) {
-      toggleReaction(m.id, emoji);
-      quickPanel.classList.add("hidden");
-    }
-  });
+  if (quickPanel) {
+    quickPanel.innerHTML = quickEmojis
+      .map((e) => `<span class="quick-react-opt" data-emoji="${e}">${e}</span>`)
+      .join("");
+    reactBtn?.addEventListener("click", () => quickPanel.classList.toggle("hidden"));
+    quickPanel.addEventListener("click", (e) => {
+      const emoji = e.target.dataset.emoji;
+      if (emoji) {
+        toggleReaction(m.id, emoji);
+        quickPanel.classList.add("hidden");
+      }
+    });
+  }
   div.querySelectorAll(".reaction-chip").forEach((chip) => {
     chip.addEventListener("click", () => toggleReaction(m.id, chip.dataset.emoji));
   });
@@ -610,6 +714,7 @@ function buildMessageBubble(m) {
 // ---------------------------------------------------------------
 function wireSwipeToReply(row, message) {
   const bubble = row.querySelector(".bubble");
+  if (!bubble) return;
   let startX = 0;
   let startY = 0;
   let dx = 0;
@@ -638,7 +743,7 @@ function wireSwipeToReply(row, message) {
       if (!horizontalLock) return;
     }
 
-    e.preventDefault(); // امنع تمرير الصفحة رأسياً أثناء السحب الأفقي
+    e.preventDefault();
     dx = Math.max(-90, Math.min(90, deltaX));
     bubble.style.transform = `translateX(${dx}px)`;
     bubble.style.transition = "none";
@@ -670,9 +775,11 @@ function renderTicks(status) {
 // ---------------------------------------------------------------
 function setReplyTarget(m) {
   state.replyingTo = m;
-  $("#reply-preview-text").textContent = messagePreviewText(m);
-  $("#reply-preview-bar").classList.remove("hidden");
-  $("#composer-input").focus();
+  const pText = $("#reply-preview-text");
+  const pBar = $("#reply-preview-bar");
+  if (pText) pText.textContent = messagePreviewText(m);
+  if (pBar) pBar.classList.remove("hidden");
+  $("#composer-input")?.focus();
 }
 
 function clearReply() {
@@ -684,19 +791,23 @@ function clearReply() {
 // REACTIONS
 // ---------------------------------------------------------------
 async function toggleReaction(messageId, emoji) {
-  const existing = (state.reactions[messageId] || []).find(
-    (r) => r.user_id === state.me.id && r.emoji === emoji
-  );
-  if (existing) {
-    await supabase.from("message_reactions").delete().eq("id", existing.id);
-  } else {
-    await supabase.from("message_reactions").insert({
-      message_id: messageId,
-      user_id: state.me.id,
-      emoji,
-    });
+  try {
+    const existing = (state.reactions[messageId] || []).find(
+      (r) => r.user_id === state.me.id && r.emoji === emoji
+    );
+    if (existing) {
+      await supabase.from("message_reactions").delete().eq("id", existing.id);
+    } else {
+      await supabase.from("message_reactions").insert({
+        message_id: messageId,
+        user_id: state.me.id,
+        emoji,
+      });
+    }
+    await loadReactionsForConversation();
+  } catch (err) {
+    console.error("toggleReaction error:", err);
   }
-  await loadReactionsForConversation();
 }
 
 // ---------------------------------------------------------------
@@ -708,7 +819,6 @@ async function sendMessage({ content, attachmentUrl, attachmentType }) {
   const replyToId = state.replyingTo?.id || null;
 
   if (!state.isOnline) {
-    // لا يوجد اتصال: خزّن الرسالة محلياً في outbox واعرضها فوراً بحالة "قيد الإرسال"
     const optimistic = {
       id: `local-${Date.now()}`,
       conversation_id: conv.id,
@@ -746,71 +856,89 @@ async function sendMessage({ content, attachmentUrl, attachmentType }) {
   });
   if (error) { showAuthError(error.message); return; }
 
-  await supabase
-    .from("conversations")
-    .update({ last_message: content || messagePreviewText({ attachment_type: attachmentType }), last_message_at: new Date().toISOString() })
-    .eq("id", conv.id);
+  try {
+    await supabase
+      .from("conversations")
+      .update({ last_message: content || messagePreviewText({ attachment_type: attachmentType }), last_message_at: new Date().toISOString() })
+      .eq("id", conv.id);
+  } catch (e) {}
 
   clearReply();
   await setTyping(false);
 }
 
-// يُنفَّذ عند عودة الاتصال: يرسل كل الرسائل المؤجلة في outbox بالترتيب
 async function flushOutbox() {
-  const pending = await getOutbox();
-  if (!pending.length) return;
-  for (const item of pending) {
-    const { local_id, queued_at, ...msg } = item;
-    const { error } = await supabase.from("messages").insert({ ...msg, status: "sent" });
-    if (!error) {
-      await removeFromOutbox(local_id);
-      await supabase
-        .from("conversations")
-        .update({ last_message: msg.content || messagePreviewText({ attachment_type: msg.attachment_type }), last_message_at: new Date().toISOString() })
-        .eq("id", msg.conversation_id);
+  try {
+    const pending = await getOutbox();
+    if (!pending || !pending.length) return;
+    for (const item of pending) {
+      const { local_id, queued_at, ...msg } = item;
+      const { error } = await supabase.from("messages").insert({ ...msg, status: "sent" });
+      if (!error) {
+        await removeFromOutbox(local_id);
+        await supabase
+          .from("conversations")
+          .update({ last_message: msg.content || messagePreviewText({ attachment_type: msg.attachment_type }), last_message_at: new Date().toISOString() })
+          .eq("id", msg.conversation_id);
+      }
     }
-  }
-  // نظّف الفقاعات المؤقتة المعلّقة وأعد تحميل المحادثة الحالية من الخادم
-  if (state.activeConversation) {
-    state.messages = state.messages.filter((m) => !m._pending);
-    await loadMessages(state.activeConversation.id);
+    if (state.activeConversation) {
+      state.messages = state.messages.filter((m) => !m._pending);
+      await loadMessages(state.activeConversation.id);
+    }
+  } catch (err) {
+    console.warn("flushOutbox error:", err);
   }
 }
 
 async function handleAttachmentUpload(e) {
   const file = e.target.files[0];
   if (!file || !state.activeConversation) return;
-  const path = `${state.me.id}/${Date.now()}_${file.name}`;
-  const { error } = await supabase.storage.from("attachments").upload(path, file);
-  if (error) { showAuthError(error.message); return; }
-  const { data: pub } = supabase.storage.from("attachments").getPublicUrl(path);
-  const type = file.type.startsWith("image/") ? "image" : "file";
-  await sendMessage({ content: null, attachmentUrl: pub.publicUrl, attachmentType: type });
-  e.target.value = "";
+  try {
+    const path = `${state.me.id}/${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("attachments").upload(path, file);
+    if (error) { showAuthError(error.message); return; }
+    const { data: pub } = supabase.storage.from("attachments").getPublicUrl(path);
+    const type = file.type.startsWith("image/") ? "image" : "file";
+    await sendMessage({ content: null, attachmentUrl: pub.publicUrl, attachmentType: type });
+  } catch (err) {
+    showAuthError("فشل رفع الملف: " + err.message);
+  } finally {
+    e.target.value = "";
+  }
 }
 
 async function handleAvatarUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
-  const path = `${state.me.id}/avatar_${Date.now()}_${file.name}`;
-  const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
-  if (error) { showAuthError(error.message); return; }
-  const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
-  await supabase.from("profiles").update({ avatar_url: pub.publicUrl }).eq("id", state.me.id);
-  state.me.avatar_url = pub.publicUrl;
-  $("#my-avatar").src = pub.publicUrl;
+  try {
+    const path = `${state.me.id}/avatar_${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
+    if (error) { showAuthError(error.message); return; }
+    const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
+    await supabase.from("profiles").update({ avatar_url: pub.publicUrl }).eq("id", state.me.id);
+    state.me.avatar_url = pub.publicUrl;
+    const avatarImg = $("#my-avatar");
+    if (avatarImg) avatarImg.src = pub.publicUrl;
+  } catch (err) {
+    showAuthError("فشل تغيير الصورة الشخصية: " + err.message);
+  }
 }
 
 async function handleWallpaperUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
-  const path = `${state.me.id}/wall_${Date.now()}_${file.name}`;
-  const { error } = await supabase.storage.from("wallpapers").upload(path, file, { upsert: true });
-  if (error) { showAuthError(error.message); return; }
-  const { data: pub } = supabase.storage.from("wallpapers").getPublicUrl(path);
-  await supabase.from("profiles").update({ wallpaper_url: pub.publicUrl }).eq("id", state.me.id);
-  state.me.wallpaper_url = pub.publicUrl;
-  applyThemeVars();
+  try {
+    const path = `${state.me.id}/wall_${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("wallpapers").upload(path, file, { upsert: true });
+    if (error) { showAuthError(error.message); return; }
+    const { data: pub } = supabase.storage.from("wallpapers").getPublicUrl(path);
+    await supabase.from("profiles").update({ wallpaper_url: pub.publicUrl }).eq("id", state.me.id);
+    state.me.wallpaper_url = pub.publicUrl;
+    applyThemeVars();
+  } catch (err) {
+    showAuthError("فشل رفع الخلفية: " + err.message);
+  }
 }
 
 // ---------------------------------------------------------------
@@ -838,16 +966,20 @@ async function startRecording() {
     mediaRecorder.start();
 
     state.recording = { mediaRecorder, chunks, stream, seconds: 0, timerInterval: null };
-    $("#recording-bar").classList.remove("hidden");
-    $("#composer-input").classList.add("hidden");
-    $("#mic-btn").textContent = "⏹";
-    $("#mic-btn").classList.add("recording-active");
+    $("#recording-bar")?.classList.remove("hidden");
+    $("#composer-input")?.classList.add("hidden");
+    const micBtn = $("#mic-btn");
+    if (micBtn) {
+      micBtn.textContent = "⏹";
+      micBtn.classList.add("recording-active");
+    }
 
     state.recording.timerInterval = setInterval(() => {
       state.recording.seconds += 1;
       const mm = String(Math.floor(state.recording.seconds / 60)).padStart(2, "0");
       const ss = String(state.recording.seconds % 60).padStart(2, "0");
-      $("#recording-timer").textContent = `${mm}:${ss}`;
+      const timer = $("#recording-timer");
+      if (timer) timer.textContent = `${mm}:${ss}`;
     }, 1000);
   } catch (err) {
     showAuthError("لم يتم منح إذن الوصول للميكروفون");
@@ -857,17 +989,22 @@ async function startRecording() {
 async function stopAndSendRecording() {
   const rec = state.recording;
   if (!rec) return;
-  const blob = await finalizeRecording(rec);
-  resetRecordingUI();
-  if (!blob) return;
+  try {
+    const blob = await finalizeRecording(rec);
+    resetRecordingUI();
+    if (!blob) return;
 
-  const path = `${state.me.id}/voice_${Date.now()}.webm`;
-  const { error } = await supabase.storage.from("attachments").upload(path, blob, {
-    contentType: "audio/webm",
-  });
-  if (error) { showAuthError(error.message); return; }
-  const { data: pub } = supabase.storage.from("attachments").getPublicUrl(path);
-  await sendMessage({ content: null, attachmentUrl: pub.publicUrl, attachmentType: "audio" });
+    const path = `${state.me.id}/voice_${Date.now()}.webm`;
+    const { error } = await supabase.storage.from("attachments").upload(path, blob, {
+      contentType: "audio/webm",
+    });
+    if (error) { showAuthError(error.message); return; }
+    const { data: pub } = supabase.storage.from("attachments").getPublicUrl(path);
+    await sendMessage({ content: null, attachmentUrl: pub.publicUrl, attachmentType: "audio" });
+  } catch (err) {
+    showAuthError("خطأ في حفظ التسجيل: " + err.message);
+    resetRecordingUI();
+  }
 }
 
 function cancelRecording() {
@@ -892,11 +1029,15 @@ function finalizeRecording(rec, discard) {
 
 function resetRecordingUI() {
   state.recording = null;
-  $("#recording-bar").classList.add("hidden");
-  $("#recording-timer").textContent = "00:00";
-  $("#composer-input").classList.remove("hidden");
-  $("#mic-btn").textContent = "🎤";
-  $("#mic-btn").classList.remove("recording-active");
+  $("#recording-bar")?.classList.add("hidden");
+  const timer = $("#recording-timer");
+  if (timer) timer.textContent = "00:00";
+  $("#composer-input")?.classList.remove("hidden");
+  const micBtn = $("#mic-btn");
+  if (micBtn) {
+    micBtn.textContent = "🎤";
+    micBtn.classList.remove("recording-active");
+  }
 }
 
 // ---------------------------------------------------------------
@@ -915,7 +1056,7 @@ function subscribeToConversation(conversationId) {
       async (payload) => {
         state.messages.push(payload.new);
         renderMessages();
-        cacheMessages(conversationId, [payload.new]);
+        cacheMessages(conversationId, [payload.new]).catch(() => {});
         if (payload.new.sender_id !== state.me.id) {
           playNotificationSound();
           await markConversationRead(conversationId);
@@ -941,13 +1082,12 @@ function subscribeToConversation(conversationId) {
       (payload) => {
         const row = payload.new;
         if (row && row.user_id !== state.me.id) {
-          $("#typing-indicator").classList.toggle("hidden", !row.is_typing);
+          $("#typing-indicator")?.classList.toggle("hidden", !row.is_typing);
         }
       }
     )
     .subscribe();
 
-  // إعادة تحميل التفاعلات عند أي تغيير (بدون فلترة لأن الجدول لا يحوي conversation_id)
   state.reactionsChannel = supabase
     .channel(`reactions:${conversationId}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, (payload) => {
@@ -960,32 +1100,38 @@ function subscribeToConversation(conversationId) {
 }
 
 async function markConversationRead(conversationId) {
-  await supabase
-    .from("messages")
-    .update({ status: "read" })
-    .eq("conversation_id", conversationId)
-    .neq("sender_id", state.me.id)
-    .neq("status", "read");
+  try {
+    await supabase
+      .from("messages")
+      .update({ status: "read" })
+      .eq("conversation_id", conversationId)
+      .neq("sender_id", state.me.id)
+      .neq("status", "read");
+  } catch (err) {
+    console.warn("markConversationRead error:", err);
+  }
 }
 
 function handleTypingInput() {
-  setTyping(true);
+  setTyping(true).catch(() => {});
   clearTimeout(state.typingTimeout);
-  state.typingTimeout = setTimeout(() => setTyping(false), 2000);
+  state.typingTimeout = setTimeout(() => setTyping(false).catch(() => {}), 2000);
 }
 
 async function setTyping(isTyping) {
   const conv = state.activeConversation;
   if (!conv) return;
-  await supabase.from("typing_status").upsert(
-    {
-      conversation_id: conv.id,
-      user_id: state.me.id,
-      is_typing: isTyping,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "conversation_id,user_id" }
-  );
+  try {
+    await supabase.from("typing_status").upsert(
+      {
+        conversation_id: conv.id,
+        user_id: state.me.id,
+        is_typing: isTyping,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "conversation_id,user_id" }
+    );
+  } catch (e) {}
 }
 
 function subscribeGlobalPresence() {
@@ -1002,7 +1148,6 @@ function subscribeGlobalPresence() {
       if (state.activeConversation) refreshPresenceLabel(state.activeConversation.otherProfile.id);
     })
     .on("presence", { event: "leave" }, async ({ leftPresences }) => {
-      // عندما يغادر أحدهم، حدّث "آخر ظهور" فور حدوث ذلك محلياً لعرضها فوراً
       if (state.activeConversation) {
         const leftIds = leftPresences.map((p) => p.presence_ref && p.key).filter(Boolean);
         if (leftIds.includes(state.activeConversation.otherProfile.id)) {
@@ -1019,22 +1164,27 @@ function subscribeGlobalPresence() {
 
 async function refreshPresenceLabel(otherId) {
   const label = $("#chat-header-status");
+  if (!label) return;
   if (state.onlineMap[otherId]) {
-    label.textContent = state.t.online;
+    label.textContent = state.t?.online || "متصل الآن";
     return;
   }
-  const { data: profile } = await supabase.from("profiles").select("last_seen").eq("id", otherId).single();
-  if (profile?.last_seen) {
-    const d = new Date(profile.last_seen);
-    const time = d.toLocaleTimeString(state.lang === "ar" ? "ar-SA" : "en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    const dateLabel = d.toDateString() === new Date().toDateString()
-      ? time
-      : d.toLocaleDateString(state.lang === "ar" ? "ar-SA" : "en-US") + " " + time;
-    label.textContent = `${state.t.last_seen} ${dateLabel}`;
-  } else {
+  try {
+    const { data: profile } = await supabase.from("profiles").select("last_seen").eq("id", otherId).single();
+    if (profile?.last_seen) {
+      const d = new Date(profile.last_seen);
+      const time = d.toLocaleTimeString(state.lang === "ar" ? "ar-SA" : "en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const dateLabel = d.toDateString() === new Date().toDateString()
+        ? time
+        : d.toLocaleDateString(state.lang === "ar" ? "ar-SA" : "en-US") + " " + time;
+      label.textContent = `${state.t?.last_seen || "آخر ظهور"} ${dateLabel}`;
+    } else {
+      label.textContent = "";
+    }
+  } catch (e) {
     label.textContent = "";
   }
 }
@@ -1072,26 +1222,27 @@ function wireEmojiPicker() {
   btn.addEventListener("click", () => panel.classList.toggle("hidden"));
   panel.addEventListener("click", (e) => {
     if (e.target.classList.contains("emoji-opt")) {
-      $("#composer-input").value += e.target.textContent;
-      panel.classList.add("hidden");
-      $("#composer-input").focus();
+      const input = $("#composer-input");
+      if (input) {
+        input.value += e.target.textContent;
+        panel.classList.add("hidden");
+        input.focus();
+      }
     }
   });
 }
 
 // ---------------------------------------------------------------
-// PWA
+// PWA & Cache Clear
 // ---------------------------------------------------------------
-// 1. مسح جميع الكاش المخزن سابقاً (Cache Storage)
 if ('caches' in window) {
   caches.keys().then((names) => {
     for (let name of names) {
       caches.delete(name);
     }
-  });
+  }).catch(() => {});
 }
 
-// 2. إعادة تسجيل الـ Service Worker ليعمل بنسخة نظيفة
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./service-worker.js").catch(() => {});
