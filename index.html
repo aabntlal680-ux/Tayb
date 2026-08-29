@@ -11,15 +11,20 @@
 </head>
 <body data-theme="dark">
 
+<!-- شاشة تحميل أولية: تمنع ظهور شاشة الدخول للحظة قبل التحقق من الجلسة المخزنة -->
+<div id="boot-loading" class="boot-loading">
+  <div class="boot-spinner"></div>
+</div>
+
 <!-- ================= AUTH SCREEN ================= -->
-<div id="auth-screen" class="auth-screen">
+<div id="auth-screen" class="auth-screen hidden">
   <div class="auth-top-actions">
     <button id="auth-lang-toggle" type="button" title="Language">🌐</button>
     <button id="auth-theme-toggle" type="button" title="Theme">🌓</button>
   </div>
-
-  <!-- زر التثبيت: مضاف أعلى بطاقة المصادقة مباشرة -->
-  <button id="pwa-install-btn" style="
+  <div class="auth-card">
+    <h1 class="auth-logo">💬 <span data-i18n="app_name">محادثات</span></h1>
+    <button id="pwa-install-btn" style="
     display: none;
     width: 100%;
     max-width: 400px;
@@ -39,13 +44,18 @@
     📲 تثبيت التطبيق
   </button>
 
-  <div class="auth-card">
-    <h1 class="auth-logo">💬 <span data-i18n="app_name">محادثات</span></h1>
     <div class="auth-tabs">
-      <button id="tab-signup" class="active" data-i18n="signup">إنشاء حساب</button>
-      <button id="tab-login" data-i18n="login">تسجيل الدخول</button>
+      <button id="tab-login" class="active" data-i18n="login">تسجيل الدخول</button>
+      <button id="tab-signup" data-i18n="signup">إنشاء حساب</button>
     </div>
+
     <p id="auth-error" class="auth-error hidden"></p>
+
+    <form id="login-form" class="auth-form">
+      <input id="login-email" type="email" required data-i18n-placeholder="email" placeholder="البريد الإلكتروني" />
+      <input id="login-password" type="password" required data-i18n-placeholder="password" placeholder="كلمة المرور" />
+      <button type="submit" data-i18n="login_btn">دخول</button>
+    </form>
 
     <form id="signup-form" class="auth-form hidden">
       <input id="signup-name" type="text" required data-i18n-placeholder="display_name" placeholder="اسم المستخدم" />
@@ -54,16 +64,10 @@
       <input id="signup-password" type="password" required minlength="6" data-i18n-placeholder="password" placeholder="كلمة المرور" />
       <button type="submit" data-i18n="signup_btn">إنشاء الحساب</button>
     </form>
-
-    <form id="login-form" class="auth-form">
-      <input id="login-email" type="email" required data-i18n-placeholder="email" placeholder="البريد الإلكتروني" />
-      <input id="login-password" type="password" required data-i18n-placeholder="password" placeholder="كلمة المرور" />
-      <button type="submit" data-i18n="login_btn">دخول</button>
-    </form>
   </div>
 </div>
 
-  <!-- ================= APP SHELL ================= -->
+<!-- ================= APP SHELL ================= -->
 <div id="app-shell" class="app-shell hidden">
   <div id="offline-banner" class="offline-banner hidden" data-i18n="offline_notice">
     لا يوجد اتصال بالإنترنت — سيتم إرسال رسائلك عند عودة الاتصال
@@ -117,34 +121,5 @@
 <div id="global-toast" class="global-toast hidden"></div>
 
 <script type="module" src="./js/app.js"></script>
-
-<script>
-    let deferredPrompt;
-    const installBtn = document.getElementById('pwa-install-btn');
-
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      if (installBtn) {
-        installBtn.style.display = 'block';
-      }
-    });
-
-    if (installBtn) {
-      installBtn.addEventListener('click', async () => {
-        if (!deferredPrompt) return;
-        deferredPrompt.prompt();
-        const { outcome } = await deferredPrompt.userChoice;
-        deferredPrompt = null;
-        installBtn.style.display = 'none';
-      });
-    }
-
-    window.addEventListener('appinstalled', () => {
-      if (installBtn) {
-        installBtn.style.display = 'none';
-      }
-    });
-  </script>
 </body>
 </html>
