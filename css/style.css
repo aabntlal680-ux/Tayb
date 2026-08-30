@@ -305,7 +305,7 @@ body[data-theme="light"] {
   position: fixed;
   inset: 0;
 
-  z-index: 3000;
+  z-index: 300;
 
   display: flex;
   align-items: center;
@@ -365,6 +365,7 @@ body[data-theme="light"] {
   display: flex;
 
   overflow: hidden;
+  touch-action: manipulation;
 }
 
 /* =========================================================
@@ -376,7 +377,7 @@ body[data-theme="light"] {
 */
 
 #chat-panel-container {
-  flex: 1 1 0;
+  flex: 1 1 0%;
 
   width: 0;
   max-width: none;
@@ -389,6 +390,7 @@ body[data-theme="light"] {
   display: flex;
 
   overflow: hidden;
+  pointer-events: auto;
 }
 
 /* =========================================================
@@ -723,7 +725,7 @@ body[data-theme="light"] .settings-panel {
    ========================================================= */
 
 #contact-list-wrap {
-  flex: 1 1 0;
+  flex: 1 1 0%;
 
   width: 100%;
 
@@ -963,7 +965,7 @@ body[data-theme="light"] .chat-header {
    ========================================================= */
 
 .chat-messages {
-  flex: 1 1 0;
+  flex: 1 1 0%;
 
   width: 100%;
 
@@ -972,12 +974,13 @@ body[data-theme="light"] .chat-header {
 
   overflow-x: hidden;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 
   padding: 20px;
 
   display: flex;
   flex-direction: column;
-
   gap: 4px;
 
   background-size: cover;
