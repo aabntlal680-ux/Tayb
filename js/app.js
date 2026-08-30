@@ -11,8 +11,11 @@ import {
   getOutbox,
   removeFromOutbox,
 } from "./db.js";
-import { enablePushNotifications, disablePushNotifications } from "./push.js";
-
+import {
+  enablePushNotifications,
+  disablePushNotifications,
+  listenForForegroundMessages,
+} from "./push.js";
 const state = {
   me: null,
   t: null,
