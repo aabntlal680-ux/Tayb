@@ -35,6 +35,7 @@ const state = {
   heartbeatInterval: null,
   recording: null, // { mediaRecorder, chunks, stream, seconds, timerInterval }
   isOnline: navigator.onLine,
+  clickedWelcomeButtons: new Set(), // معرفات الرسائل التي ضُغط أحد أزرارها بالفعل (لتعطيلها بصرياً بعد الاستخدام)
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -48,15 +49,27 @@ async function boot() {
   await loadChatPanelPartial();
   state.t = applyLanguage(state.lang); // بعد حقن الجزء الديناميكي حتى تُطبَّق data-i18n عليه أيضاً
 
+  // ---------------- Auto-Login / Persistent Auth ----------------
+  // نتحقق من الجلسة المخزّنة (localStorage) قبل إظهار أي واجهة؛ شاشة boot-loading
+  // تبقى ظاهرة طوال هذا الفحص حتى لا تومض شاشة تسجيل الدخول لمستخدم لديه جلسة نشطة أصلاً.
   const { data: { session } } = await supabase.auth.getSession();
   wireAuthForms();
   wireChrome();
 
+  $("#boot-loading")?.classList.add("hidden");
   if (session) {
-    await enterApp();
+    await enterApp(); // ينتقل المستخدم فوراً لواجهة المحادثات دون المرور بشاشة الدخول
   } else {
     showAuthScreen();
   }
+
+  // يتعامل مع انتهاء صلاحية الجلسة أو تسجيل الخروج من جهاز/تبويب آخر أثناء الاستخدام
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_OUT") {
+      state.me = null;
+      showAuthScreen();
+    }
+  });
 
   window.addEventListener("beforeunload", () => {
     if (state.me) {
@@ -629,6 +642,18 @@ function buildMessageBubble(m) {
         .join("")}</div>`
     : "";
 
+  // أزرار تفاعلية (رسالة ترحيبية من البوت) — تُعرض فقط لمستقبل الرسالة، وليس لمن أرسلها
+  let buttonsHtml = "";
+  if (!mine && Array.isArray(m.buttons) && m.buttons.length) {
+    const used = state.clickedWelcomeButtons.has(m.id);
+    buttonsHtml = `<div class="msg-buttons">${m.buttons
+      .map(
+        (b) =>
+          `<button type="button" class="msg-btn" data-value="${escapeHtml(b.value)}" ${used ? "disabled" : ""}>${escapeHtml(b.label)}</button>`
+      )
+      .join("")}</div>`;
+  }
+
   div.innerHTML = `
     <div class="bubble">
       <div class="bubble-actions">
@@ -640,8 +665,20 @@ function buildMessageBubble(m) {
       ${m.content ? `<div class="bubble-text">${escapeHtml(m.content)}</div>` : ""}
       <div class="bubble-meta"><span class="bubble-time">${time}</span>${ticks}</div>
       ${reactionsHtml}
+      ${buttonsHtml}
       <div class="quick-react-panel hidden"></div>
     </div>`;
+
+  // معالجة الضغط على أزرار الرسالة التفاعلية: يُرسل نص الزر كرسالة عادية من العميل،
+  // ثم يتولى بوت الكلمات المفتاحية على مستوى قاعدة البيانات (trigger) توليد الرد التلقائي تلقائياً
+  div.querySelectorAll(".msg-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (btn.disabled) return;
+      state.clickedWelcomeButtons.add(m.id);
+      div.querySelectorAll(".msg-btn").forEach((b) => (b.disabled = true));
+      await sendMessage({ content: btn.dataset.value });
+    });
+  });
 
   div.querySelector(".bubble-action-reply").addEventListener("click", () => setReplyTarget(m));
   const reactBtn = div.querySelector(".bubble-action-react");
@@ -1151,31 +1188,7 @@ function wireEmojiPicker() {
   if (panel.dataset.wired === "1") return; // يمنع الربط المكرر إن استُدعيت الدالة أكثر من مرة
   panel.dataset.wired = "1";
 
-  const emojis = [
-    // وجوه وانفعالات
-    "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "🥹", "☺️", "😊", 
-    "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", 
-    "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", 
-    "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", 
-    "😢", "😭", "😮‍💨", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", 
-    "😨", "😰", "😥", "😓", "🫣", "🤗", "🫡", "🤔", "🤫", "🫠", "🤥", 
-    "😶", "😶‍🌫️", "😐", "😑", "😬", "🫨", "😯", "😦", "😧", "😮", "😲", "🥱", 
-    "😴", "🤤", "😪", "😵", "😵‍💫", "🤐", "🥴", "🤢", "🤮", "🤧", "😷", "🤒",
-
-  // الإشارات والأيدي
-    "👍", "👎", "👏", "🙌", "🫶", "👐", "🤲", "🤝", "🙏", "✍️", "💅", "🤳", 
-    "💪", "🦾", "🖐️", "✋", "🤚", "👋", "🤙", "🤌", "🤏", "👌", "🫰", "✌️", 
-    "🤞", "🤟", "🤘", "👈", "👉", "👆", "🖕", "👇", "☝️", "🫵", "🤜", "🤛",
-
-  // القلوب والمشاعر
-    "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❤️‍🔥", "❤️‍🩹", 
-    "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "🫀", "✨", "💥", "🔥", 
-
-  // أنشطة واحتفالات وأشياء
-    "🎉", "🎊", "🎈", "🎂", "🎁", "⭐", "🌟", "💫", "💯", "✅", "❌", "⚠️", 
-    "☕", "🍕", "🍔", "🍟", "⚽", "🏀", "🚀", "📱", "💻", "📸", "🎵", "🎧"
-  ];
-
+  const emojis = ["😀","😂","😍","😢","😮","🙏","👍","❤️","🔥","🎉","😅","😎"];
   panel.innerHTML = emojis.map((e) => `<span class="emoji-opt">${e}</span>`).join("");
 
   btn.addEventListener("click", (e) => {
