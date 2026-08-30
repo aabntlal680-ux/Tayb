@@ -36,7 +36,7 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
 
   console.log(
-    "[firebase.js] Background message:",
+    "[firebase-messaging-sw.js] Background message:",
     payload
   );
 
