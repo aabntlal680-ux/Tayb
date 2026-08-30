@@ -1,6 +1,18 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+// ===============================================================
+// Firebase Cloud Messaging Service Worker
+// ===============================================================
+
+importScripts(
+  "https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"
+);
+
+importScripts(
+  "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"
+);
+
+// ---------------------------------------------------------------
+// Firebase Configuration
+// ---------------------------------------------------------------
 
 const firebaseConfig = {
   apiKey: "AIzaSyDeg6RBNC9bWw1QYxBkYtCuMMFPBzxpw4o",
@@ -11,8 +23,121 @@ const firebaseConfig = {
   appId: "1:599267399266:web:329e49e24298af60f5e33b"
 };
 
-const app = initializeApp(firebaseConfig);
+// ---------------------------------------------------------------
+// Messaging
+// ---------------------------------------------------------------
 
-export const db = getFirestore(app);
-export const auth = getAuth(app);
-export default app;
+const messaging = firebase.messaging();
+
+// ---------------------------------------------------------------
+// Background Messages
+// ---------------------------------------------------------------
+
+messaging.onBackgroundMessage((payload) => {
+
+  console.log(
+    "[firebase-messaging-sw.js] Background message:",
+    payload
+  );
+
+  const notification =
+    payload.notification || {};
+
+  const data =
+    payload.data || {};
+
+  const title =
+    notification.title ||
+    data.title ||
+    "رسالة جديدة";
+
+  const body =
+    notification.body ||
+    data.body ||
+    "لديك رسالة جديدة";
+
+  const notificationOptions = {
+    body,
+
+    icon:
+      data.icon ||
+      "/icon.png",
+
+    badge:
+      data.badge ||
+      "/icon.png",
+
+    tag:
+      data.conversationId ||
+      "whatsapp-message",
+
+    renotify: true,
+
+    data: {
+      ...data,
+    },
+
+    // صوت إشعار النظام
+    // ملاحظة: المتصفح/النظام هو من يتحكم في الصوت
+    sound: "/sounds/notification.mp3",
+  };
+
+  return self.registration.showNotification(
+    title,
+    notificationOptions
+  );
+});
+
+// ---------------------------------------------------------------
+// Notification Click
+// ---------------------------------------------------------------
+
+self.addEventListener(
+  "notificationclick",
+  (event) => {
+
+    event.notification.close();
+
+    const data =
+      event.notification.data || {};
+
+    const conversationId =
+      data.conversationId || "";
+
+    const targetUrl =
+      conversationId
+        ? `/#chat`
+        : "/";
+
+    event.waitUntil(
+      clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      }).then((clientList) => {
+
+        for (const client of clientList) {
+
+          if ("focus" in client) {
+
+            if (conversationId) {
+              client.postMessage({
+                type: "OPEN_CONVERSATION",
+                conversationId,
+              });
+            }
+
+            return client.focus();
+          }
+        }
+
+        if (clients.openWindow) {
+          return clients.openWindow(
+            targetUrl
+          );
+        }
+
+        return null;
+      })
+    );
+  }
+);
