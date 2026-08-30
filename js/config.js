@@ -4,7 +4,7 @@
 export const SUPABASE_URL = "https://eqzmvhwyfpoopqascgox.supabase.co";
 export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxem12aHd5ZnBvb3BxYXNjZ294Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4NjY3NjMsImV4cCI6MjEwMzQ0Mjc2M30.8at9boBSCM27IJUJQLHuIvCPM95bSxCLGFUx3qn9PK4";
 
-export const VAPID_PUBLIC_KEY = "BCqyzADL9EiLf60Y35fi9lRRefCPyB-GLj_p72sMuSV8d2KbRTaS231bNX2t3vc08Jrs3Ljhem_xD_BxvR__T2o";
+export const VAPID_PUBLIC_KEY = "BAxTu3HSXPEgeTyTRPoXvpkLQWu8llJQfsPEoUr0MDjHKRJ0VSzPFcJw5RFv-s6BTnZYeWEHW8NSQzAjfOxoJfo";
 
 // قائمة المشرفين الثابتة (يجب أن تطابق دالة is_admin_email في schema.sql)
 export const ADMINS = [
