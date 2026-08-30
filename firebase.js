@@ -36,7 +36,7 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
 
   console.log(
-    "[firebase-messaging-sw.js] Background message:",
+    "[firebase.js] Background message:",
     payload
   );
 
@@ -61,11 +61,11 @@ messaging.onBackgroundMessage((payload) => {
 
     icon:
       data.icon ||
-      "/icon.png",
+      "/icons/icon.png",
 
     badge:
       data.badge ||
-      "/icon.png",
+      "/icons/icon.png",
 
     tag:
       data.conversationId ||
@@ -79,7 +79,7 @@ messaging.onBackgroundMessage((payload) => {
 
     // صوت إشعار النظام
     // ملاحظة: المتصفح/النظام هو من يتحكم في الصوت
-    sound: "/sounds/notification.mp3",
+    sound: "/icons/notify.mp3",
   };
 
   return self.registration.showNotification(
