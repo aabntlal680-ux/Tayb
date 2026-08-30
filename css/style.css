@@ -12,12 +12,14 @@
   --wa-bg-chat-light: #efeae2;
   --wa-bubble-mine-light: #d9fdd3;
   --wa-bubble-theirs-light: #ffffff;
-  --wa-danger-gradient: linear-gradient(135deg, #ff4b4b 0%, #dc2626 100%);
-  --wa-glass-bg-dark: rgba(17, 27, 33, 0.85);
-  --wa-glass-bg-light: rgba(255, 255, 255, 0.9);
 }
 
 * { box-sizing: border-box; }
+html, body {
+  max-width: 100%;
+  overflow-x: hidden; /* يمنع أي تمرير أفقي غير مقصود على الشاشات الصغيرة */
+}
+img, video, audio { max-width: 100%; height: auto; }
 body {
   margin: 0;
   font-family: "Segoe UI", "Helvetica Neue", Arial, "Tahoma", sans-serif;
@@ -28,14 +30,13 @@ body[data-theme="dark"] { background: var(--wa-bg-dark); color: #e9edef; }
 body[data-theme="light"] { background: var(--wa-bg-light); color: #111b21; }
 .hidden { display: none !important; }
 button { cursor: pointer; font-family: inherit; }
-input, select { font-family: inherit; }
+input { font-family: inherit; }
 
 /* ---------------- AUTH ---------------- */
 .auth-screen {
   height: 100vh;
   display: flex; align-items: center; justify-content: center;
   background: linear-gradient(160deg, #111b21, #005c4b);
-  padding: 16px;
 }
 .auth-top-actions {
   position: fixed; top: 16px; inset-inline-end: 16px; display: flex; gap: 8px; z-index: 5;
@@ -43,39 +44,31 @@ input, select { font-family: inherit; }
 .auth-top-actions button {
   background: rgba(255,255,255,.08); border: none; color: #fff; font-size: 18px;
   width: 38px; height: 38px; border-radius: 50%;
-  transition: background 0.2s, transform 0.2s;
 }
-.auth-top-actions button:hover { background: rgba(255,255,255,.18); transform: scale(1.05); }
+.auth-top-actions button:hover { background: rgba(255,255,255,.18); }
 .auth-card {
   background: var(--wa-panel-dark);
   padding: 32px 28px;
-  border-radius: 16px;
+  border-radius: 14px;
   width: 100%; max-width: 380px;
   box-shadow: 0 12px 40px rgba(0,0,0,.4);
-  backdrop-filter: blur(10px);
 }
 .auth-logo { text-align: center; color: #fff; margin-bottom: 20px; }
 .auth-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
 .auth-tabs button {
   flex: 1; padding: 10px; border: none; border-radius: 8px;
   background: #2a3942; color: var(--wa-text-secondary);
-  transition: all 0.25s ease;
 }
-.auth-tabs button.active { background: var(--wa-green); color: #fff; font-weight: 600; }
+.auth-tabs button.active { background: var(--wa-green); color: #fff; }
 .auth-form { display: flex; flex-direction: column; gap: 12px; }
 .auth-form input {
   padding: 12px 14px; border-radius: 8px; border: 1px solid #2a3942;
-  background: #2a3942; color: #fff; font-size: 14px; outline: none;
-  transition: border-color 0.2s;
+  background: #2a3942; color: #fff; font-size: 14px;
 }
-.auth-form input:focus { border-color: var(--wa-green); }
 .auth-form button[type="submit"] {
   padding: 12px; border: none; border-radius: 8px;
   background: var(--wa-green); color: #fff; font-weight: 600; font-size: 15px;
-  transition: opacity 0.2s, transform 0.1s;
 }
-.auth-form button[type="submit"]:hover { opacity: 0.9; }
-.auth-form button[type="submit"]:active { transform: scale(0.98); }
 .auth-error { color: #ff6b6b; text-align: center; font-size: 13px; }
 
 .offline-banner {
@@ -104,13 +97,12 @@ input, select { font-family: inherit; }
 @keyframes boot-spin { to { transform: rotate(360deg); } }
 
 /* ---------------- APP SHELL ---------------- */
-.app-shell { display: flex; height: 100vh; width: 100vw; overflow: hidden; }
+.app-shell { display: flex; height: 100vh; }
 .sidebar {
   width: 400px; max-width: 40%;
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; position: relative;
   border-inline-end: 1px solid rgba(134,150,160,.15);
   background: var(--wa-panel-dark);
-  transition: background 0.3s;
 }
 body[data-theme="light"] .sidebar { background: var(--wa-panel-light); }
 
@@ -124,7 +116,6 @@ body[data-theme="light"] .sidebar-header { background: var(--wa-bg-light); }
 .sidebar-actions button, .chat-header button {
   background: none; border: none; color: var(--wa-text-secondary);
   font-size: 18px; padding: 8px; border-radius: 50%;
-  transition: background 0.2s;
 }
 .sidebar-actions button:hover { background: rgba(255,255,255,.08); }
 
@@ -140,92 +131,58 @@ body[data-theme="light"] .sidebar-header { background: var(--wa-bg-light); }
   background: var(--wa-green); border: 2px solid var(--wa-panel-dark);
 }
 
-/* ---------------- SETTINGS PANEL (DESIGN UPGRADE) ---------------- */
+/* نافذة الإعدادات: بطاقة عائمة حديثة مع ظل يفصلها عن الواجهة الرئيسية */
 .settings-panel {
-  padding: 16px 18px; display: flex; flex-direction: column; gap: 14px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid rgba(134, 150, 160, 0.18);
-  backdrop-filter: blur(8px);
-  animation: slide-down 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  position: absolute; top: 8px; inset-inline-start: 8px; z-index: 40;
+  width: min(300px, calc(100% - 16px));
+  max-height: calc(100vh - 32px); overflow-y: auto;
+  background: var(--wa-panel-dark);
+  border: 1px solid rgba(134,150,160,.12);
+  border-radius: 16px;
+  padding: 18px;
+  display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.25);
 }
 body[data-theme="light"] .settings-panel {
-  background: rgba(240, 242, 245, 0.85);
+  background: var(--wa-panel-light);
+  box-shadow: 0 16px 40px rgba(17,27,33,.18), 0 2px 8px rgba(17,27,33,.08);
 }
-
-@keyframes slide-down {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 .settings-panel label {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--wa-green);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--wa-text-secondary);
+  text-transform: uppercase; letter-spacing: .4px; margin-top: 4px;
 }
-
-.settings-panel select, 
-.settings-panel input[type="text"], 
+.settings-panel label:first-child { margin-top: 0; }
 .settings-panel input[type="file"] {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(134, 150, 160, 0.25);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
-  font-size: 13.5px;
-  outline: none;
-  transition: all 0.2s ease;
+  font-size: 12.5px; color: var(--wa-text-secondary);
+  padding: 8px 10px; border-radius: 10px;
+  background: rgba(134,150,160,.1); border: 1px dashed rgba(134,150,160,.3);
 }
+.settings-panel button {
+  border: none; border-radius: 12px; padding: 12px 14px;
+  font-weight: 600; font-size: 13.5px; letter-spacing: .2px;
+  transition: transform .12s ease, filter .15s ease, box-shadow .15s ease;
+}
+.settings-panel button:hover { filter: brightness(1.08); }
+.settings-panel button:active { transform: scale(.97); }
 
-body[data-theme="light"] .settings-panel select,
-body[data-theme="light"] .settings-panel input[type="text"] {
-  background: #ffffff;
+#btn-enable-push {
+  background: rgba(0,168,132,.15); color: var(--wa-green);
 }
-
-.settings-panel select:focus, 
-.settings-panel input[type="text"]:focus {
-  border-color: var(--wa-green);
-  box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.2);
-}
+#btn-enable-push:hover { background: rgba(0,168,132,.25); }
 
 .logout-btn {
-  margin-top: 8px;
-  padding: 12px 16px;
-  border: none;
-  border-radius: 10px;
-  background: var(--wa-danger-gradient);
-  color: #ffffff;
-  font-weight: 600;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
-  transition: all 0.25s ease;
+  margin-top: 6px;
+  background: linear-gradient(135deg, #ff7a7a, #e64c4c);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(230,76,76,.35);
 }
-
-.logout-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(220, 38, 38, 0.45);
-  filter: brightness(1.1);
-}
-
-.logout-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
-}
+.logout-btn:hover { box-shadow: 0 8px 20px rgba(230,76,76,.45); }
 
 .search-box { padding: 8px 12px; }
 .search-box input {
-  width: 100%; padding: 10px 16px; border-radius: 20px; border: none;
+  width: 100%; padding: 8px 14px; border-radius: 20px; border: none;
   background: rgba(134,150,160,.15); color: inherit; outline: none;
-  font-size: 14px; transition: background 0.2s;
 }
-.search-box input:focus { background: rgba(134,150,160,.25); }
 
 .section-heading {
   padding: 10px 16px 4px; font-size: 12px; font-weight: 700;
@@ -234,13 +191,10 @@ body[data-theme="light"] .settings-panel input[type="text"] {
 
 #contact-list-wrap { overflow-y: auto; flex: 1; }
 .contact-row {
-  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 12px; padding: 10px 16px;
   cursor: pointer; border-bottom: 1px solid rgba(134,150,160,.08);
-  transition: background 0.15s;
 }
 .contact-row:hover { background: rgba(255,255,255,.05); }
-body[data-theme="light"] .contact-row:hover { background: rgba(0,0,0,.03); }
-
 .contact-info { flex: 1; min-width: 0; }
 .contact-name { font-weight: 600; font-size: 15px; }
 .contact-sub {
@@ -263,7 +217,7 @@ body[data-theme="light"] .chat-panel { background: var(--wa-bg-chat-light); }
 
 .chat-empty-state {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: var(--wa-text-secondary); gap: 10px; text-align: center; padding: 20px;
+  color: var(--wa-text-secondary); gap: 10px;
 }
 .chat-empty-icon { font-size: 48px; opacity: .6; }
 
@@ -285,7 +239,7 @@ body[data-theme="light"] .chat-header { background: var(--wa-bg-light); }
 }
 .empty-chat { margin: auto; color: var(--wa-text-secondary); }
 
-.bubble-row { display: flex; position: relative; margin-bottom: 2px; }
+.bubble-row { display: flex; position: relative; }
 .bubble-row.mine { justify-content: flex-end; }
 .bubble-row.theirs { justify-content: flex-start; }
 .bubble-row::before {
@@ -296,7 +250,7 @@ body[data-theme="light"] .chat-header { background: var(--wa-bg-light); }
 .bubble-row.theirs::before { inset-inline-start: -28px; }
 .bubble-row.swipe-armed::before { opacity: 1; transform: translateY(-50%) scale(1); }
 .bubble {
-  max-width: 70%; padding: 8px 10px; border-radius: 10px; position: relative;
+  max-width: 65%; padding: 8px 10px; border-radius: 10px; position: relative;
   background: var(--wa-bubble-theirs-dark); color: #e9edef; font-size: 14.5px;
   box-shadow: 0 1px 1px rgba(0,0,0,.3);
 }
@@ -309,20 +263,20 @@ body[data-theme="light"] .bubble-row.mine .bubble { background: var(--wa-bubble-
   font-size: 11px; color: var(--wa-text-secondary);
 }
 .ticks-read { color: #53bdeb; }
-.msg-attachment { max-width: 260px; border-radius: 8px; display: block; margin-bottom: 4px; }
-.msg-file { color: inherit; }
-.msg-audio { max-width: 240px; height: 36px; }
+.msg-attachment { max-width: min(260px, 100%); border-radius: 8px; display: block; margin-bottom: 4px; }
+.msg-file { color: inherit; word-break: break-word; }
+.msg-audio { max-width: min(240px, 100%); width: 100%; height: 36px; }
 
-/* Reply quote block */
+/* Reply quote block shown inside a bubble */
 .quoted-reply {
   border-inline-start: 3px solid var(--wa-green);
   background: rgba(0,0,0,.15);
   padding: 4px 8px; margin-bottom: 6px; border-radius: 4px;
   font-size: 12.5px; color: var(--wa-text-secondary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 
-/* Hover actions on a bubble */
+/* Hover actions on a bubble: reply + react */
 .bubble-actions {
   position: absolute; top: -14px; inset-inline-end: 6px;
   display: none; gap: 2px; background: var(--wa-panel-dark);
@@ -340,9 +294,10 @@ body[data-theme="light"] .bubble-actions { background: #fff; }
   position: absolute; top: -46px; inset-inline-end: 0;
   background: var(--wa-panel-dark); border-radius: 20px; padding: 6px 8px;
   display: flex; gap: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.4); z-index: 5;
+  max-width: calc(100vw - 24px); overflow-x: auto;
 }
 body[data-theme="light"] .quick-react-panel { background: #fff; }
-.quick-react-opt { cursor: pointer; font-size: 18px; transition: transform 0.15s; }
+.quick-react-opt { cursor: pointer; font-size: 18px; }
 .quick-react-opt:hover { transform: scale(1.2); }
 
 .reaction-bar { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
@@ -352,16 +307,15 @@ body[data-theme="light"] .quick-react-panel { background: #fff; }
 }
 .reaction-chip.mine { background: var(--wa-green); color: #fff; }
 
-/* Interactive buttons inside bubble */
+/* أزرار الرسالة التفاعلية (رسالة ترحيبية من البوت مثلاً) — مرتبة رأسياً أسفل الفقاعة */
 .msg-buttons {
   display: flex; flex-direction: column; margin-top: 8px;
-  border-top: 1px solid rgba(134,150,160,.25); min-width: 220px;
+  border-top: 1px solid rgba(134,150,160,.25); min-width: min(220px, 60vw);
 }
 .msg-btn {
   background: none; border: none; border-top: 1px solid rgba(134,150,160,.15);
   color: var(--wa-green); font-weight: 600; font-size: 14px;
   padding: 10px 4px; cursor: pointer; text-align: center; width: 100%;
-  transition: background 0.15s;
 }
 .msg-btn:first-child { border-top: none; }
 .msg-btn:hover:not(:disabled) { background: rgba(0,168,132,.08); }
@@ -373,7 +327,7 @@ body[data-theme="light"] .quick-react-panel { background: #fff; }
 }
 body[data-theme="light"] .composer { background: var(--wa-bg-light); }
 .composer input[type="text"] {
-  flex: 1; padding: 12px 16px; border-radius: 24px; border: none;
+  flex: 1; min-width: 0; padding: 12px 16px; border-radius: 24px; border: none;
   background: rgba(134,150,160,.15); color: inherit; outline: none; font-size: 14.5px;
 }
 .composer button { background: none; border: none; font-size: 20px; color: var(--wa-text-secondary); }
@@ -382,7 +336,7 @@ body[data-theme="light"] .composer { background: var(--wa-bg-light); }
 .mic-btn { transition: color .15s, transform .15s; }
 .mic-btn.recording-active { color: #ff6b6b !important; transform: scale(1.15); }
 
-/* Reply preview bar */
+/* Reply preview bar above composer */
 .reply-preview-bar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 14px; background: rgba(0,168,132,.08);
@@ -393,7 +347,7 @@ body[data-theme="light"] .composer { background: var(--wa-bg-light); }
 .reply-preview-label { font-size: 12px; color: var(--wa-green); font-weight: 700; }
 .reply-preview-text {
   font-size: 13px; color: var(--wa-text-secondary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(320px, 60vw);
 }
 .reply-preview-bar button {
   background: none; border: none; color: var(--wa-text-secondary); font-size: 14px; cursor: pointer;
@@ -418,12 +372,14 @@ body[data-theme="light"] .composer { background: var(--wa-bg-light); }
   background: var(--wa-panel-dark); border-radius: 10px; padding: 10px;
   display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;
   box-shadow: 0 4px 20px rgba(0,0,0,.4);
-  max-height: 250px; overflow-y: auto; z-index: 10;
+  max-height: 250px; overflow-y: auto;
 }
 body[data-theme="light"] .emoji-panel { background: #fff; }
 .emoji-opt { cursor: pointer; font-size: 20px; text-align: center; }
 
-/* ---------------- RESPONSIVE BREAKPOINTS ---------------- */
+/* ---------------- RESPONSIVE ---------------- */
+
+/* الجوال (شاشات صغيرة): عرض واحد فقط في كل مرة — إما القائمة أو الدردشة، ملء الشاشة بالكامل */
 @media (max-width: 768px) {
   .sidebar { width: 100%; max-width: 100%; }
   .chat-panel { display: none; }
@@ -431,20 +387,64 @@ body[data-theme="light"] .emoji-panel { background: #fff; }
   .app-shell.hidden { display: none; }
   #app-shell { position: relative; }
 
+  /* body.viewing-chat هو مصدر الحقيقة الوحيد للتنقل بين القائمة والدردشة على الجوال/التابلت
+     (يُضبط عبر history.pushState/popstate في app.js حتى يعمل زر الرجوع الفعلي للجهاز) */
   body.viewing-chat .sidebar { display: none; }
   body.viewing-chat .chat-panel { display: flex; position: fixed; inset: 0; z-index: 20; }
 
+  /* توافق خلفي مع الأصناف القديمة إن استُخدمت في مكان آخر */
   .sidebar.mobile-hidden { display: none; }
   .chat-panel.mobile-visible { display: flex; position: fixed; inset: 0; z-index: 20; }
-  
-  .bubble { max-width: 82%; }
 }
 
-@media (min-width: 769px) and (max-width: 1024px) {
-  .sidebar { width: 340px; max-width: 35%; }
-  .bubble { max-width: 75%; }
+/* شاشات صغيرة جداً (هواتف مضغوطة): تضييق الحشوات لمنع خروج العناصر عن حواف الشاشة */
+@media (max-width: 380px) {
+  .auth-card { padding: 24px 18px; }
+  .auth-top-actions { top: 10px; inset-inline-end: 10px; }
+  .auth-top-actions button { width: 34px; height: 34px; font-size: 16px; }
+
+  .sidebar-header { padding: 8px 10px; }
+  .me span#my-name, .me #my-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sidebar-actions { gap: 2px; }
+  .sidebar-actions button, .chat-header button { font-size: 16px; padding: 6px; }
+
+  .chat-messages { padding: 12px 10px; }
+  .bubble { max-width: 82%; font-size: 14px; }
+  .chat-header { padding: 8px 10px; gap: 8px; }
+  .composer { padding: 8px 10px; gap: 4px; }
+  .reply-preview-bar, .recording-bar { margin: 0 8px; }
+  .settings-panel { inset-inline-start: 6px; top: 6px; padding: 14px; }
 }
 
-@media (min-width: 1025px) {
+/* التابلت والكمبيوتر: توزيع الواجهة إلى ثلاثة أقسام بأسلوب واتساب —
+   1) شريط أيقونات ضيق ثابت (الحساب + اللغة + المظهر + الإعدادات)
+   2) قائمة المحادثات
+   3) شاشة الدردشة المفتوحة (تشغل بقية الشاشة) */
+@media (min-width: 769px) {
+  .app-shell { padding-inline-start: 76px; position: relative; }
+
+  .sidebar-header {
+    position: fixed; inset-block: 0; inset-inline-start: 0;
+    width: 76px; height: 100vh; z-index: 30;
+    flex-direction: column; justify-content: flex-start; align-items: center;
+    padding: 22px 0; gap: 22px;
+    border-inline-end: 1px solid rgba(134,150,160,.15);
+    background: var(--wa-panel-dark);
+  }
+  body[data-theme="light"] .sidebar-header { background: var(--wa-bg-light); }
+
+  .sidebar-header .me { flex-direction: column; gap: 6px; }
+  .sidebar-header .me #my-name { display: none; } /* الاسم الكامل لا يناسب الشريط الضيق، يبقى الأفاتار فقط */
+
+  .sidebar-actions { flex-direction: column; gap: 14px; }
+  .sidebar-actions button {
+    width: 42px; height: 42px; font-size: 19px; border-radius: 12px;
+  }
+
+  .sidebar { width: clamp(280px, 32vw, 400px); max-width: 400px; }
+}
+
+/* تكبير عرض قائمة المحادثات قليلاً على الشاشات الكبيرة جداً */
+@media (min-width: 1400px) {
   .sidebar { width: 400px; }
 }
