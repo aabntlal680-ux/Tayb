@@ -429,13 +429,15 @@ body[data-theme="light"] .sidebar {
 
 .sidebar-header {
   display: flex;
+  position: sticky;
+  flex-direction: row;
   align-items: center;
   justify-content: space-between;
-
+  width: 100%;
   flex: 0 0 auto;
-
+  tob: 0;
   padding: 10px 16px;
-
+  z-index: 999;
   background: var(--wa-panel-dark);
 }
 
@@ -466,8 +468,9 @@ body[data-theme="light"] .sidebar-header {
 
 .sidebar-actions {
   display: flex;
-  gap: 4px;
-
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
   flex-shrink: 0;
 }
 
