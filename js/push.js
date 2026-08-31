@@ -30,7 +30,7 @@ const firebaseConfig = {
 // ---------------------------------------------------------------
 
 const VAPID_KEY =
-  "BAxTu3HSXPEgeTyTRPoXvpkLQWu8llJQfsPEoUr0MDjHKRJ0VSzPFcJw5RFv-s6BTnZYeWEHW8NSQzAjfOxo";
+  "BAxTu3HSXPEgeTyTRPoXvpkLQWu8llJQfsPEoUr0MDjHKRJ0VSzPFcJw5RFv-s6BTnZYeWEHW8NSQzAjfOxoJfo";
 
 // ---------------------------------------------------------------
 // Firebase Initialization
