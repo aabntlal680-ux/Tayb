@@ -42,16 +42,23 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      return (
-        cached ||
-        fetch(event.request)
-          .then((response) => {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+      if (cached) return cached;
+
+      return fetch(event.request)
+        .then((response) => {
+        // التأكد من أن الاستجابة صالحة والطلب من نوع GET قبل التخزين
+          if (!response || response.status !== 200 || response.type !== 'basic' || event.request.method !== 'GET') {
             return response;
-          })
-          .catch(() => cached)
-      );
+          }
+
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+
+          return response;
+        })
+        .catch(() => cached);
     })
   );
 });
