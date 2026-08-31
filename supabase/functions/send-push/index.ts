@@ -1,90 +1,108 @@
-// supabase/functions/send-push/index.ts
-// Edge Function تُستدعى تلقائياً (عبر trigger + pg_net) عند إدراج رسالة جديدة.
-// تُرسل Web Push للمستلم إن كان لديه اشتراك مسجّل في push_subscriptions.
-//
-// النشر:
-//   supabase functions deploy send-push
-//   supabase secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... VAPID_SUBJECT=mailto:you@example.com
-//   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=... SUPABASE_URL=...
-//
-// توليد مفاتيح VAPID (على جهازك، خارج هذه البيئة):
-//   npx web-push generate-vapid-keys
-
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import webpush from "https://esm.sh/web-push@3.6.7";
+import { JWT } from "https://esm.sh/google-auth-library@8.7.0";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY")!;
-const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY")!;
-const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") || "mailto:admin@example.com";
+// ---------------------------------------------------------------
+// 1. Firebase Service Account Config (من متغيرات البيئة)
+// ---------------------------------------------------------------
+const FIREBASE_PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID")!;
+const FIREBASE_CLIENT_EMAIL = Deno.env.get("FIREBASE_CLIENT_EMAIL")!;
+// استبدال أسطر الـ Private Key الجديدة (\n)
+const FIREBASE_PRIVATE_KEY = Deno.env.get("FIREBASE_PRIVATE_KEY")?.replace(/\\n/g, "\n")!;
 
-webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+// ---------------------------------------------------------------
+// 2. توليد Access Token لـ Firebase HTTP v1 API
+// ---------------------------------------------------------------
+async function getAccessToken(): Promise<string> {
+  const client = new JWT({
+    email: FIREBASE_CLIENT_EMAIL,
+    key: FIREBASE_PRIVATE_KEY,
+    scopes: ["https://www.googleapis.com/auth/firebase.messaging"],
+  });
 
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const tokens = await client.authorize();
+  return tokens.access_token!;
+}
 
-Deno.serve(async (req) => {
+// ---------------------------------------------------------------
+// 3. معالج الطلبات الرئيسي
+// ---------------------------------------------------------------
+serve(async (req) => {
   try {
-    const { message_id, conversation_id, sender_id, content } = await req.json();
+    // التحقق من صحة الطلب والقراءة
+    const payload = await req.json();
+    const record = payload.record; // السطر الجديد المضاف في جدول messages
 
-    // حدد المستلم (الطرف الآخر في المحادثة)
-    const { data: conv } = await supabase
-      .from("conversations")
-      .select("user_id, admin_id")
-      .eq("id", conversation_id)
-      .single();
-    if (!conv) return new Response("conversation not found", { status: 404 });
-
-    const recipientId = conv.user_id === sender_id ? conv.admin_id : conv.user_id;
-
-    const { data: sender } = await supabase
-      .from("profiles")
-      .select("display_name")
-      .eq("id", sender_id)
-      .single();
-
-    const { data: subs } = await supabase
-      .from("push_subscriptions")
-      .select("*")
-      .eq("user_id", recipientId);
-
-    if (!subs || !subs.length) {
-      return new Response(JSON.stringify({ skipped: "no subscription" }), { status: 200 });
+    if (!record || !record.receiver_id || !record.content) {
+      return new Response(JSON.stringify({ message: "بيانات غير مكتملة" }), { status: 400 });
     }
 
-    const payload = JSON.stringify({
-      title: sender?.display_name || "رسالة جديدة",
-      body: content || "📎 مرفق",
-      conversationId: conversation_id,
-      messageId: message_id,
+    const receiverId = record.receiver_id;
+    const messageContent = record.content;
+    const conversationId = record.conversation_id || "";
+
+    // -----------------------------------------------------------
+    // 4. جلب FCM Token للمستلم من Supabase
+    // -----------------------------------------------------------
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const { data: tokensData, error: tokenError } = await supabase
+      .from("fcm_tokens")
+      .select("token")
+      .eq("user_id", receiverId);
+
+    if (tokenError || !tokensData || tokensData.length === 0) {
+      console.log(`لا يوجد FCM Token للمستخدم: ${receiverId}`);
+      return new Response(JSON.stringify({ message: "لم يتم العثور على توكن للمستلم" }), { status: 200 });
+    }
+
+    // -----------------------------------------------------------
+    // 5. إرسال الإشعار لجميع أجهزة المستلم عبر FCM HTTP v1
+    // -----------------------------------------------------------
+    const accessToken = await getAccessToken();
+    const fcmEndpoint = `https://fcm.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/messages:send`;
+
+    const sendPromises = tokensData.map(async ({ token }) => {
+      const fcmPayload = {
+        message: {
+          token: token,
+          notification: {
+            title: "رسالة جديدة 💬",
+            body: messageContent,
+          },
+          data: {
+            conversationId: String(conversationId),
+            senderId: String(record.sender_id || ""),
+          },
+        },
+      };
+
+      const response = await fetch(fcmEndpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(fcmPayload),
+      });
+
+      return response.json();
     });
 
-    const results = await Promise.allSettled(
-      subs.map((s) =>
-        webpush.sendNotification(
-          {
-            endpoint: s.endpoint,
-            keys: { p256dh: s.p256dh, auth: s.auth },
-          },
-          payload
-        )
-      )
-    );
+    const results = await Promise.all(sendPromises);
 
-    // احذف الاشتراكات المنتهية الصلاحية (410/404)
-    await Promise.all(
-      results.map(async (r, i) => {
-        if (r.status === "rejected") {
-          const status = (r.reason && r.reason.statusCode) || 0;
-          if (status === 410 || status === 404) {
-            await supabase.from("push_subscriptions").delete().eq("id", subs[i].id);
-          }
-        }
-      })
-    );
+    return new Response(JSON.stringify({ success: true, results }), {
+      headers: { "Content-Type": "application/json" },
+      status: 200,
+    });
 
-    return new Response(JSON.stringify({ sent: results.length }), { status: 200 });
-  } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+  } catch (error) {
+    console.error("خطأ أثناء إرسال الإشعار:", error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      headers: { "Content-Type": "application/json" },
+      status: 500,
+    });
   }
 });
