@@ -1,27 +1,15 @@
-// ===============================================================
-// Firebase Cloud Messaging Service Worker
-// ===============================================================
-
-importScripts(
-  "https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"
-);
-
-importScripts(
-  "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"
-);
-
-// ---------------------------------------------------------------
-// Firebase Configuration
-// ---------------------------------------------------------------
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getMessaging, onBackgroundMessage } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDeg6RBNC9bWw1QYxBkYtCuMMFPBzxpw4o",
+  apiKey: "AIzaSyDeg6RBNC9bww1QYxBkYtCu...",
   authDomain: "studio-6422025604-b97aa.firebaseapp.com",
   projectId: "studio-6422025604-b97aa",
-  storageBucket: "studio-6422025604-b97aa.firebasestorage.app",
+  storageBucket: "studio-6422025604-b97aa.appspot.com",
   messagingSenderId: "599267399266",
-  appId: "1:599267399266:web:329e49e24298af60f5e33b"
+  appId: "1:599267399266:web:329e49e2429..."
 };
+
 
 // ---------------------------------------------------------------
 // Messaging
