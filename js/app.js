@@ -169,6 +169,21 @@ async function boot() {
   refreshPWAInstallButton();
 }
 
+// إعادة الاتصال تلقائياً عند عودة المستخدم للصفحة
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted && supabase) {
+    supabase.realtime.connect();
+  }
+});
+
+// قطع الاتصال بنظافة قبل تجميد الصفحة
+window.addEventListener('pagehide', () => {
+  if (supabase && supabase.realtime) {
+    supabase.realtime.disconnect();
+  }
+});
+
+
 // ===============================================================
 // CHAT VIEW
 // ===============================================================
