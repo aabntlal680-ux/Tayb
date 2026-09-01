@@ -16,6 +16,7 @@ import {
   disablePushNotifications,
   listenForForegroundMessages,
 } from "./push.js";
+
 const state = {
   me: null,
   t: null,
@@ -24,6 +25,12 @@ const state = {
 
   contacts: [],
   contactRowsByConversation: {},
+
+  // =============================================================
+  // LIVE UI INDEX
+  // conversationId -> HTMLElement
+  // =============================================================
+  contactElements: {},
 
   activeConversation: null,
   messages: [],
@@ -47,21 +54,12 @@ const state = {
 
   clickedWelcomeButtons: new Set(),
 
-  // -------------------------------------------------------------
-  // PWA INSTALL
-  // -------------------------------------------------------------
   deferredInstallPrompt: null,
   installButton: null,
 
-  // -------------------------------------------------------------
-  // MEDIA UPLOAD
-  // -------------------------------------------------------------
   mediaUploading: false,
   mediaUploadStatusElement: null,
 
-  // -------------------------------------------------------------
-  // FCM FOREGROUND LISTENER
-  // -------------------------------------------------------------
   foregroundMessagesUnsub: null,
 };
 
@@ -80,10 +78,6 @@ async function boot() {
 
   state.t = applyLanguage(state.lang);
 
-  // -------------------------------------------------------------
-  // AUTO LOGIN
-  // -------------------------------------------------------------
-
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -99,20 +93,12 @@ async function boot() {
     showAuthScreen();
   }
 
-  // -------------------------------------------------------------
-  // AUTH STATE
-  // -------------------------------------------------------------
-
   supabase.auth.onAuthStateChange((event) => {
     if (event === "SIGNED_OUT") {
       state.me = null;
       showAuthScreen();
     }
   });
-
-  // -------------------------------------------------------------
-  // VISIBILITY
-  // -------------------------------------------------------------
 
   window.addEventListener("beforeunload", () => {
     if (state.me) {
@@ -132,10 +118,6 @@ async function boot() {
     }
   });
 
-  // -------------------------------------------------------------
-  // NETWORK
-  // -------------------------------------------------------------
-
   window.addEventListener("online", () => {
     state.isOnline = true;
     updateOfflineBanner();
@@ -149,10 +131,6 @@ async function boot() {
   });
 
   updateOfflineBanner();
-
-  // -------------------------------------------------------------
-  // SPA ROUTER
-  // -------------------------------------------------------------
 
   window.addEventListener("popstate", (event) => {
     if (!event.state || !event.state.waChat) {
@@ -170,24 +148,20 @@ async function boot() {
     }
   });
 
-  // بعد اكتمال DOM نتأكد من وجود زر تثبيت التطبيق
   refreshPWAInstallButton();
 }
 
-// إعادة الاتصال تلقائياً عند عودة المستخدم للصفحة
-window.addEventListener('pageshow', (event) => {
+window.addEventListener("pageshow", (event) => {
   if (event.persisted && supabase) {
     supabase.realtime.connect();
   }
 });
 
-// قطع الاتصال بنظافة قبل تجميد الصفحة
-window.addEventListener('pagehide', () => {
-  if (supabase && supabase.realtime) {
+window.addEventListener("pagehide", () => {
+  if (supabase?.realtime) {
     supabase.realtime.disconnect();
   }
 });
-
 
 // ===============================================================
 // CHAT VIEW
@@ -196,21 +170,20 @@ window.addEventListener('pagehide', () => {
 function openConversationUIState(conversationId) {
   document.body.classList.add("viewing-chat");
 
+  const historyState = {
+    waChat: true,
+    conversationId,
+  };
+
   if (history.state && history.state.waChat) {
     history.replaceState(
-      {
-        waChat: true,
-        conversationId,
-      },
+      historyState,
       "",
       "#chat"
     );
   } else {
     history.pushState(
-      {
-        waChat: true,
-        conversationId,
-      },
+      historyState,
       "",
       "#chat"
     );
@@ -230,7 +203,6 @@ function closeChatView() {
 
 function updateOfflineBanner() {
   const banner = $("#offline-banner");
-
   if (!banner) return;
 
   banner.classList.toggle("hidden", state.isOnline);
@@ -286,7 +258,6 @@ async function enterApp() {
   applyThemeVars();
 
   await touchLastSeen(true);
-
   startHeartbeat();
 
   await loadContacts();
@@ -295,23 +266,69 @@ async function enterApp() {
   subscribeInboxUpdates();
   subscribeGlobalMessageWatch();
 
-  // تفعيل الاستماع لرسائل FCM الواردة أثناء فتح التطبيق (foreground) —
-  // كانت مستوردة سابقاً دون استدعاء فعلي؛ مرة واحدة فقط لكل جلسة تسجيل دخول.
   if (!state.foregroundMessagesUnsub) {
     try {
-      state.foregroundMessagesUnsub = listenForForegroundMessages({
-        onNotification: () => {
-          // حدّث شارات غير المقروء والمعاينة فور وصول أي رسالة أثناء الاستخدام
-          loadContacts();
-        },
-      });
+      state.foregroundMessagesUnsub =
+        listenForForegroundMessages({
+          onNotification: handleForegroundNotification,
+        });
     } catch (err) {
-      console.error("تعذّر تفعيل استماع رسائل FCM الأمامية:", err);
+      console.error(
+        "تعذّر تفعيل استماع رسائل FCM الأمامية:",
+        err
+      );
     }
   }
 
   if (state.isOnline) {
     flushOutbox();
+  }
+}
+
+// ===============================================================
+// LIVE FOREGROUND NOTIFICATION
+// ===============================================================
+
+function extractNotificationMessage(payload) {
+  if (!payload) return null;
+
+  const candidates = [
+    payload?.message,
+    payload?.new,
+    payload?.data,
+    payload,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+
+    if (
+      candidate.conversation_id ||
+      candidate.conversationId
+    ) {
+      return {
+        ...candidate,
+        conversation_id:
+          candidate.conversation_id ||
+          candidate.conversationId,
+      };
+    }
+  }
+
+  return null;
+}
+
+async function handleForegroundNotification(payload) {
+  const message = extractNotificationMessage(payload);
+
+  if (message?.conversation_id) {
+    await patchContactUIOnNewMessage(message);
+  } else {
+    // إذا لم يرسل FCM بيانات الرسالة نفسها، نعيد مزامنة البيانات
+    // بدون إعادة تحميل الصفحة.
+    await loadContacts();
   }
 }
 
@@ -322,13 +339,17 @@ async function enterApp() {
 async function touchLastSeen(online) {
   if (!state.me) return;
 
-  await supabase
-    .from("profiles")
-    .update({
-      is_online: online,
-      last_seen: new Date().toISOString(),
-    })
-    .eq("id", state.me.id);
+  try {
+    await supabase
+      .from("profiles")
+      .update({
+        is_online: online,
+        last_seen: new Date().toISOString(),
+      })
+      .eq("id", state.me.id);
+  } catch (err) {
+    console.error("touchLastSeen failed:", err);
+  }
 }
 
 function startHeartbeat() {
@@ -361,11 +382,7 @@ function wireAuthForms() {
     const password = $("#login-password").value;
 
     try {
-      await signIn({
-        email,
-        password,
-      });
-
+      await signIn({ email, password });
       await enterApp();
     } catch (err) {
       showAuthError(err.message);
@@ -401,11 +418,25 @@ function wireAuthForms() {
 }
 
 function switchAuthTab(which) {
-  $("#tab-login")?.classList.toggle("active", which === "login");
-  $("#tab-signup")?.classList.toggle("active", which === "signup");
+  $("#tab-login")?.classList.toggle(
+    "active",
+    which === "login"
+  );
 
-  $("#login-form")?.classList.toggle("hidden", which !== "login");
-  $("#signup-form")?.classList.toggle("hidden", which !== "signup");
+  $("#tab-signup")?.classList.toggle(
+    "active",
+    which === "signup"
+  );
+
+  $("#login-form")?.classList.toggle(
+    "hidden",
+    which !== "login"
+  );
+
+  $("#signup-form")?.classList.toggle(
+    "hidden",
+    which !== "signup"
+  );
 }
 
 function showAuthError(msg) {
@@ -428,20 +459,22 @@ function showAuthError(msg) {
         el.classList.add("hidden");
       }, 4000);
     }
-  } else {
-    const toast = $("#global-toast");
 
-    if (!toast) return;
-
-    toast.textContent = text;
-    toast.classList.remove("hidden");
-
-    clearTimeout(toast._hideTimeout);
-
-    toast._hideTimeout = setTimeout(() => {
-      toast.classList.add("hidden");
-    }, 5000);
+    return;
   }
+
+  const toast = $("#global-toast");
+
+  if (!toast) return;
+
+  toast.textContent = text;
+  toast.classList.remove("hidden");
+
+  clearTimeout(toast._hideTimeout);
+
+  toast._hideTimeout = setTimeout(() => {
+    toast.classList.add("hidden");
+  }, 5000);
 }
 
 // ===============================================================
@@ -458,8 +491,15 @@ function wireChrome() {
     location.reload();
   });
 
-  $("#lang-toggle")?.addEventListener("click", toggleLanguage);
-  $("#theme-toggle")?.addEventListener("click", toggleTheme);
+  $("#lang-toggle")?.addEventListener(
+    "click",
+    toggleLanguage
+  );
+
+  $("#theme-toggle")?.addEventListener(
+    "click",
+    toggleTheme
+  );
 
   $("#auth-lang-toggle")?.addEventListener(
     "click",
@@ -507,15 +547,9 @@ function wireChrome() {
 // ===============================================================
 
 function toggleLanguage() {
-  state.lang =
-    state.lang === "ar"
-      ? "en"
-      : "ar";
+  state.lang = state.lang === "ar" ? "en" : "ar";
 
-  localStorage.setItem(
-    "wa_lang",
-    state.lang
-  );
+  localStorage.setItem("wa_lang", state.lang);
 
   state.t = applyLanguage(state.lang);
 }
@@ -525,15 +559,9 @@ function toggleLanguage() {
 // ===============================================================
 
 function toggleTheme() {
-  state.theme =
-    state.theme === "dark"
-      ? "light"
-      : "dark";
+  state.theme = state.theme === "dark" ? "light" : "dark";
 
-  localStorage.setItem(
-    "wa_theme",
-    state.theme
-  );
+  localStorage.setItem("wa_theme", state.theme);
 
   document.body.setAttribute(
     "data-theme",
@@ -553,14 +581,10 @@ function wireChatPanel() {
     async (e) => {
       e.preventDefault();
 
-      if (state.mediaUploading) {
-        return;
-      }
+      if (state.mediaUploading) return;
 
       const input = $("#composer-input");
-
-      const text =
-        input.value.trim();
+      const text = input.value.trim();
 
       if (!text) return;
 
@@ -614,29 +638,48 @@ function applyThemeVars() {
 }
 
 // ===============================================================
+// CONTACT INDEX
+// ===============================================================
+
+function resetContactIndex() {
+  state.contactRowsByConversation = {};
+  state.contactElements = {};
+}
+
+function indexContactElement(conversationId, element) {
+  if (!conversationId || !element) return;
+
+  state.contactElements[conversationId] = element;
+  state.contactRowsByConversation[conversationId] = element;
+
+  element.dataset.conversationId = conversationId;
+}
+
+// ===============================================================
 // CONTACTS
 // ===============================================================
 
 async function loadContacts() {
+  if (!state.me) return;
+
   if (!state.isOnline) {
     const cached = await getCachedContacts();
-
     renderContactsFromCache(cached);
-
     return;
   }
 
   try {
     await loadContactsFromNetwork();
   } catch (err) {
-    const cached = await getCachedContacts();
+    console.error("loadContacts failed:", err);
 
+    const cached = await getCachedContacts();
     renderContactsFromCache(cached);
   }
 }
 
 function renderContactsFromCache(cached) {
-  state.contactRowsByConversation = {};
+  resetContactIndex();
 
   $("#contact-list").innerHTML = "";
 
@@ -646,7 +689,7 @@ function renderContactsFromCache(cached) {
   $("#users-heading")?.classList.add("hidden");
   $("#users-section")?.classList.add("hidden");
 
-  cached.forEach((c) => {
+  (cached || []).forEach((c) => {
     $("#contact-list").appendChild(
       buildContactRow(c, {
         withUnread: !!c._unread,
@@ -656,12 +699,10 @@ function renderContactsFromCache(cached) {
 }
 
 async function loadContactsFromNetwork() {
-  state.contactRowsByConversation = {};
+  resetContactIndex();
 
   if (!state.me.is_admin) {
-    const {
-      data: adminProfiles,
-    } = await supabase
+    const { data: adminProfiles } = await supabase
       .from("profiles")
       .select("*")
       .in(
@@ -688,106 +729,111 @@ async function loadContactsFromNetwork() {
     });
 
     await cacheContacts(state.contacts);
-  } else {
-    $("#contact-list").innerHTML = "";
-
-    $("#admins-heading")?.classList.remove("hidden");
-    $("#admins-section")?.classList.remove("hidden");
-
-    $("#users-heading")?.classList.remove("hidden");
-    $("#users-section")?.classList.remove("hidden");
-
-    const {
-      data: otherAdmins,
-    } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("is_admin", true)
-      .neq("id", state.me.id);
-
-    // صلاحيات المشرف العام (Super Admin): يرى محادثات كل المشرفين، لا محادثاته
-    // فقط. يُضبط هذا الحقل من قاعدة البيانات حصرياً (profiles.is_super_admin)
-    // عبر sql/schema.sql — راجع القسم الخاص بذلك لتفعيله على حسابات إضافية.
-    let convsQuery = supabase
-      .from("conversations")
-      .select(
-        state.me.is_super_admin
-          ? "*, user:profiles!conversations_user_id_fkey(*), owner_admin:profiles!conversations_admin_id_fkey(*)"
-          : "*, user:profiles!conversations_user_id_fkey(*)"
-      )
-      .order("last_message_at", {
-        ascending: false,
-      });
-
-    if (!state.me.is_super_admin) {
-      convsQuery = convsQuery.eq("admin_id", state.me.id);
-    }
-
-    const {
-      data: convs,
-      error: convsError,
-    } = await convsQuery;
-
-    if (convsError) {
-      console.error("تعذّر جلب المحادثات:", convsError);
-    }
-
-    const userContacts = [];
-
-    for (const c of convs || []) {
-      const { count } = await supabase
-        .from("messages")
-        .select("id", {
-          count: "exact",
-          head: true,
-        })
-        .eq("conversation_id", c.id)
-        .neq("sender_id", state.me.id)
-        .neq("status", "read");
-
-      userContacts.push({
-        ...c.user,
-        _conversationId: c.id,
-        _unread: count || 0,
-        _lastMessage: c.last_message,
-        // يُعرض فقط للمشرف العام كي يعرف أي مشرف يملك هذه المحادثة أصلاً
-        _ownerAdminName:
-          state.me.is_super_admin && c.owner_admin?.id !== state.me.id
-            ? c.owner_admin?.display_name
-            : null,
-      });
-    }
-
-    $("#admins-section").innerHTML = "";
-
-    (otherAdmins || []).forEach((c) => {
-      $("#admins-section").appendChild(
-        buildContactRow(c, {
-          withUnread: false,
-        })
-      );
-    });
-
-    $("#users-section").innerHTML = "";
-
-    userContacts.forEach((c) => {
-      $("#users-section").appendChild(
-        buildContactRow(c, {
-          withUnread: true,
-        })
-      );
-    });
-
-    await cacheContacts([
-      ...(otherAdmins || []),
-      ...userContacts,
-    ]);
+    return;
   }
+
+  $("#contact-list").innerHTML = "";
+
+  $("#admins-heading")?.classList.remove("hidden");
+  $("#admins-section")?.classList.remove("hidden");
+
+  $("#users-heading")?.classList.remove("hidden");
+  $("#users-section")?.classList.remove("hidden");
+
+  const { data: otherAdmins } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("is_admin", true)
+    .neq("id", state.me.id);
+
+  let convsQuery = supabase
+    .from("conversations")
+    .select(
+      state.me.is_super_admin
+        ? "*, user:profiles!conversations_user_id_fkey(*), owner_admin:profiles!conversations_admin_id_fkey(*)"
+        : "*, user:profiles!conversations_user_id_fkey(*)"
+    )
+    .order("last_message_at", {
+      ascending: false,
+    });
+
+  if (!state.me.is_super_admin) {
+    convsQuery = convsQuery.eq(
+      "admin_id",
+      state.me.id
+    );
+  }
+
+  const {
+    data: convs,
+    error: convsError,
+  } = await convsQuery;
+
+  if (convsError) {
+    console.error(
+      "تعذّر جلب المحادثات:",
+      convsError
+    );
+  }
+
+  const userContacts = [];
+
+  for (const c of convs || []) {
+    const { count } = await supabase
+      .from("messages")
+      .select("id", {
+        count: "exact",
+        head: true,
+      })
+      .eq("conversation_id", c.id)
+      .neq("sender_id", state.me.id)
+      .neq("status", "read");
+
+    userContacts.push({
+      ...c.user,
+      _conversationId: c.id,
+      _unread: count || 0,
+      _lastMessage: c.last_message,
+      _ownerAdminName:
+        state.me.is_super_admin &&
+        c.owner_admin?.id !== state.me.id
+          ? c.owner_admin?.display_name
+          : null,
+    });
+  }
+
+  $("#admins-section").innerHTML = "";
+
+  (otherAdmins || []).forEach((c) => {
+    $("#admins-section").appendChild(
+      buildContactRow(c, {
+        withUnread: false,
+      })
+    );
+  });
+
+  $("#users-section").innerHTML = "";
+
+  userContacts.forEach((c) => {
+    $("#users-section").appendChild(
+      buildContactRow(c, {
+        withUnread: true,
+      })
+    );
+  });
+
+  await cacheContacts([
+    ...(otherAdmins || []),
+    ...userContacts,
+  ]);
 }
 
-function buildContactRow(c, opts) {
-  const row =
-    document.createElement("div");
+// ===============================================================
+// CONTACT ROW
+// ===============================================================
+
+function buildContactRow(c, opts = {}) {
+  const row = document.createElement("div");
 
   row.className = "contact-row";
 
@@ -820,7 +866,9 @@ function buildContactRow(c, opts) {
         ${escapeHtml(c.display_name)}
         ${
           c._ownerAdminName
-            ? `<span class="owner-admin-badge">${escapeHtml(c._ownerAdminName)}</span>`
+            ? `<span class="owner-admin-badge">${escapeHtml(
+                c._ownerAdminName
+              )}</span>`
             : ""
         }
       </div>
@@ -841,22 +889,164 @@ function buildContactRow(c, opts) {
     openConversation(c);
   });
 
-  if (
-    opts.withUnread &&
-    c._conversationId
-  ) {
-    row.dataset.conversationId =
-      c._conversationId;
+  if (c._conversationId) {
+    indexContactElement(
+      c._conversationId,
+      row
+    );
 
     row.dataset.unread =
       String(c._unread || 0);
-
-    state.contactRowsByConversation[
-      c._conversationId
-    ] = row;
   }
 
   return row;
+}
+
+// ===============================================================
+// LIVE CONTACT DOM PATCHING
+// ===============================================================
+
+/**
+ * تحديث صف المحادثة مباشرة بدون إعادة بناء القائمة كاملة.
+ *
+ * يقوم بـ:
+ * 1. تحديث آخر رسالة.
+ * 2. زيادة/تصفير unread.
+ * 3. تحريك المحادثة إلى أعلى قسمها.
+ * 4. إبقاء مرجع العنصر في state.contactElements.
+ */
+async function patchContactUIOnNewMessage(
+  message,
+  options = {}
+) {
+  if (!message || !message.conversation_id) {
+    return;
+  }
+
+  const conversationId =
+    message.conversation_id;
+
+  const isMine =
+    message.sender_id === state.me?.id;
+
+  const isActive =
+    state.activeConversation?.id ===
+    conversationId;
+
+  const preview =
+    messagePreviewText(message);
+
+  let row =
+    state.contactElements[
+      conversationId
+    ];
+
+  // -------------------------------------------------------------
+  // إذا كان الصف موجوداً، نعمل DOM patch مباشرة.
+  // -------------------------------------------------------------
+
+  if (row) {
+    const sub =
+      row.querySelector(".contact-sub");
+
+    if (sub) {
+      sub.textContent = preview;
+    }
+
+    let unread =
+      parseInt(
+        row.dataset.unread || "0",
+        10
+      );
+
+    if (
+      !isMine &&
+      !isActive &&
+      options.incrementUnread !== false
+    ) {
+      unread += 1;
+    }
+
+    if (isActive || isMine) {
+      unread = 0;
+    }
+
+    row.dataset.unread =
+      String(unread);
+
+    let badge =
+      row.querySelector(".unread-badge");
+
+    if (unread > 0) {
+      if (!badge) {
+        badge =
+          document.createElement("div");
+
+        badge.className =
+          "unread-badge";
+
+        row.appendChild(badge);
+      }
+
+      badge.textContent =
+        String(unread);
+    } else {
+      badge?.remove();
+    }
+
+    moveContactRowToTop(row);
+
+    return;
+  }
+
+  // -------------------------------------------------------------
+  // إذا لم يكن الصف مفهرساً بعد، نحاول تحديث القائمة من الشبكة.
+  // هذا fallback وليس المسار الطبيعي للـ Live UI.
+  // -------------------------------------------------------------
+
+  await loadContacts();
+}
+
+/**
+ * نقل صف المحادثة إلى أعلى القسم الذي يحتويه.
+ */
+function moveContactRowToTop(row) {
+  if (!row || !row.parentElement) return;
+
+  const parent = row.parentElement;
+
+  if (parent.firstElementChild !== row) {
+    parent.prepend(row);
+  }
+}
+
+/**
+ * تحديث صف موجود عند وصول تحديث conversations.
+ */
+function patchContactUIOnConversationUpdate(
+  conversation
+) {
+  if (!conversation?.id) return;
+
+  const row =
+    state.contactElements[
+      conversation.id
+    ];
+
+  if (!row) {
+    loadContacts();
+    return;
+  }
+
+  const sub =
+    row.querySelector(".contact-sub");
+
+  if (sub && conversation.last_message !== undefined) {
+    sub.textContent =
+      conversation.last_message || "";
+  }
+
+  moveContactRowToTop(row);
 }
 
 // ===============================================================
@@ -865,7 +1055,7 @@ function buildContactRow(c, opts) {
 
 function bumpUnreadBadge(conversationId) {
   const row =
-    state.contactRowsByConversation[
+    state.contactElements[
       conversationId
     ];
 
@@ -884,9 +1074,7 @@ function bumpUnreadBadge(conversationId) {
     String(current);
 
   let badge =
-    row.querySelector(
-      ".unread-badge"
-    );
+    row.querySelector(".unread-badge");
 
   if (!badge) {
     badge =
@@ -900,11 +1088,13 @@ function bumpUnreadBadge(conversationId) {
 
   badge.textContent =
     String(current);
+
+  moveContactRowToTop(row);
 }
 
 function clearUnreadBadge(conversationId) {
   const row =
-    state.contactRowsByConversation[
+    state.contactElements[
       conversationId
     ];
 
@@ -922,11 +1112,9 @@ function clearUnreadBadge(conversationId) {
 // ===============================================================
 
 function escapeHtml(str) {
-  const d =
-    document.createElement("div");
+  const d = document.createElement("div");
 
-  d.textContent =
-    str || "";
+  d.textContent = str || "";
 
   return d.innerHTML;
 }
@@ -1037,11 +1225,14 @@ async function openConversation(otherProfile) {
       conversationId
     );
 
-    await markConversationRead(
+    // ===========================================================
+    // LIVE: تصفير العداد فور فتح المحادثة
+    // ===========================================================
+    clearUnreadBadge(
       conversationId
     );
 
-    clearUnreadBadge(
+    await markConversationRead(
       conversationId
     );
   } catch (err) {
@@ -1072,15 +1263,11 @@ async function loadMessages(conversationId) {
     );
 
   if (cached.length) {
-    state.messages =
-      cached;
-
+    state.messages = cached;
     renderMessages();
   }
 
-  if (!state.isOnline) {
-    return;
-  }
+  if (!state.isOnline) return;
 
   const {
     data,
@@ -1097,11 +1284,14 @@ async function loadMessages(conversationId) {
     });
 
   if (error) {
+    console.error(
+      "loadMessages failed:",
+      error
+    );
     return;
   }
 
-  state.messages =
-    data || [];
+  state.messages = data || [];
 
   renderMessages();
 
@@ -1123,29 +1313,16 @@ async function loadReactionsForConversation() {
       (m) => m.id
     );
 
-  if (!ids.length) {
-    return;
-  }
+  if (!ids.length) return;
 
-  const {
-    data,
-  } = await supabase
+  const { data } = await supabase
     .from("message_reactions")
     .select("*")
-    .in(
-      "message_id",
-      ids
-    );
+    .in("message_id", ids);
 
   (data || []).forEach((r) => {
-    if (
-      !state.reactions[
-        r.message_id
-      ]
-    ) {
-      state.reactions[
-        r.message_id
-      ] = [];
+    if (!state.reactions[r.message_id]) {
+      state.reactions[r.message_id] = [];
     }
 
     state.reactions[
@@ -1198,24 +1375,15 @@ function messagePreviewText(m) {
     return m.content;
   }
 
-  if (
-    m.attachment_type ===
-    "image"
-  ) {
+  if (m.attachment_type === "image") {
     return "📷 صورة";
   }
 
-  if (
-    m.attachment_type ===
-    "audio"
-  ) {
+  if (m.attachment_type === "audio") {
     return "🎤 رسالة صوتية";
   }
 
-  if (
-    m.attachment_type ===
-    "file"
-  ) {
+  if (m.attachment_type === "file") {
     return "📎 ملف";
   }
 
@@ -1228,8 +1396,7 @@ function messagePreviewText(m) {
 
 function buildMessageBubble(m) {
   const mine =
-    m.sender_id ===
-    state.me.id;
+    m.sender_id === state.me.id;
 
   const div =
     document.createElement("div");
@@ -1272,57 +1439,37 @@ function buildMessageBubble(m) {
   const quotedHtml =
     quoted
       ? `<div class="quoted-reply">${escapeHtml(
-          messagePreviewText(
-            quoted
-          )
+          messagePreviewText(quoted)
         )}</div>`
       : "";
 
   let attach = "";
 
-  // -------------------------------------------------------------
-  // IMPORTANT:
-  // لا يتم إنشاء عنصر الصورة إلا بعد وجود attachment_url
-  // النهائي القادم من Supabase.
-  // -------------------------------------------------------------
-
   if (m.attachment_url) {
-    if (
-      m.attachment_type ===
-      "image"
-    ) {
+    if (m.attachment_type === "image") {
       attach = `
         <img
           class="msg-attachment"
-          src="${escapeHtml(
-            m.attachment_url
-          )}"
+          src="${escapeHtml(m.attachment_url)}"
           alt=""
           loading="lazy"
           decoding="async"
         >
       `;
-    } else if (
-      m.attachment_type ===
-      "audio"
-    ) {
+    } else if (m.attachment_type === "audio") {
       attach = `
         <audio
           class="msg-audio"
           controls
           preload="metadata"
-          src="${escapeHtml(
-            m.attachment_url
-          )}"
+          src="${escapeHtml(m.attachment_url)}"
         ></audio>
       `;
     } else {
       attach = `
         <a
           class="msg-file"
-          href="${escapeHtml(
-            m.attachment_url
-          )}"
+          href="${escapeHtml(m.attachment_url)}"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -1333,9 +1480,7 @@ function buildMessageBubble(m) {
   }
 
   const reactions =
-    state.reactions[
-      m.id
-    ] || [];
+    state.reactions[m.id] || [];
 
   const grouped = {};
 
@@ -1346,17 +1491,10 @@ function buildMessageBubble(m) {
         mine: false,
       };
 
-    grouped[
-      r.emoji
-    ].count += 1;
+    grouped[r.emoji].count += 1;
 
-    if (
-      r.user_id ===
-      state.me.id
-    ) {
-      grouped[
-        r.emoji
-      ].mine = true;
+    if (r.user_id === state.me.id) {
+      grouped[r.emoji].mine = true;
     }
   });
 
@@ -1364,21 +1502,15 @@ function buildMessageBubble(m) {
     Object.keys(grouped).length
       ? `
         <div class="reaction-bar">
-          ${Object.entries(
-            grouped
-          )
+          ${Object.entries(grouped)
             .map(
               ([emoji, g]) =>
                 `
                 <span
                   class="reaction-chip ${
-                    g.mine
-                      ? "mine"
-                      : ""
+                    g.mine ? "mine" : ""
                   }"
-                  data-emoji="${escapeHtml(
-                    emoji
-                  )}"
+                  data-emoji="${escapeHtml(emoji)}"
                 >
                   ${emoji} ${g.count}
                 </span>
@@ -1388,10 +1520,6 @@ function buildMessageBubble(m) {
         </div>
       `
       : "";
-
-  // -------------------------------------------------------------
-  // INTERACTIVE BUTTONS
-  // -------------------------------------------------------------
 
   let buttonsHtml = "";
 
@@ -1417,15 +1545,9 @@ function buildMessageBubble(m) {
                 data-value="${escapeHtml(
                   b.value
                 )}"
-                ${
-                  used
-                    ? "disabled"
-                    : ""
-                }
+                ${used ? "disabled" : ""}
               >
-                ${escapeHtml(
-                  b.label
-                )}
+                ${escapeHtml(b.label)}
               </button>
             `
           )
@@ -1456,7 +1578,6 @@ function buildMessageBubble(m) {
       </div>
 
       ${quotedHtml}
-
       ${attach}
 
       ${
@@ -1475,7 +1596,6 @@ function buildMessageBubble(m) {
       </div>
 
       ${reactionsHtml}
-
       ${buttonsHtml}
 
       <div class="quick-react-panel hidden"></div>
@@ -1483,28 +1603,20 @@ function buildMessageBubble(m) {
     </div>
   `;
 
-  // -------------------------------------------------------------
-  // MESSAGE BUTTONS
-  // -------------------------------------------------------------
-
   div
     .querySelectorAll(".msg-btn")
     .forEach((btn) => {
       btn.addEventListener(
         "click",
         async () => {
-          if (btn.disabled) {
-            return;
-          }
+          if (btn.disabled) return;
 
           state.clickedWelcomeButtons.add(
             m.id
           );
 
           div
-            .querySelectorAll(
-              ".msg-btn"
-            )
+            .querySelectorAll(".msg-btn")
             .forEach(
               (b) =>
                 (b.disabled = true)
@@ -1518,24 +1630,14 @@ function buildMessageBubble(m) {
       );
     });
 
-  // -------------------------------------------------------------
-  // REPLY
-  // -------------------------------------------------------------
-
   div
     .querySelector(
       ".bubble-action-reply"
     )
     ?.addEventListener(
       "click",
-      () => {
-        setReplyTarget(m);
-      }
+      () => setReplyTarget(m)
     );
-
-  // -------------------------------------------------------------
-  // REACTION
-  // -------------------------------------------------------------
 
   const reactBtn =
     div.querySelector(
@@ -1585,8 +1687,7 @@ function buildMessageBubble(m) {
       "click",
       (e) => {
         const emoji =
-          e.target.dataset
-            .emoji;
+          e.target.dataset.emoji;
 
         if (emoji) {
           toggleReaction(
@@ -1603,9 +1704,7 @@ function buildMessageBubble(m) {
   }
 
   div
-    .querySelectorAll(
-      ".reaction-chip"
-    )
+    .querySelectorAll(".reaction-chip")
     .forEach((chip) => {
       chip.addEventListener(
         "click",
@@ -1618,10 +1717,7 @@ function buildMessageBubble(m) {
       );
     });
 
-  wireSwipeToReply(
-    div,
-    m
-  );
+  wireSwipeToReply(div, m);
 
   return div;
 }
@@ -1630,14 +1726,9 @@ function buildMessageBubble(m) {
 // SWIPE TO REPLY
 // ===============================================================
 
-function wireSwipeToReply(
-  row,
-  message
-) {
+function wireSwipeToReply(row, message) {
   const bubble =
-    row.querySelector(
-      ".bubble"
-    );
+    row.querySelector(".bubble");
 
   let startX = 0;
   let startY = 0;
@@ -1660,9 +1751,7 @@ function wireSwipeToReply(
       dragging = true;
       horizontalLock = false;
     },
-    {
-      passive: true,
-    }
+    { passive: true }
   );
 
   row.addEventListener(
@@ -1683,33 +1772,22 @@ function wireSwipeToReply(
 
       if (!horizontalLock) {
         if (
-          Math.abs(deltaX) >
-            10 ||
-          Math.abs(deltaY) >
-            10
+          Math.abs(deltaX) > 10 ||
+          Math.abs(deltaY) > 10
         ) {
           horizontalLock =
-            Math.abs(
-              deltaX
-            ) >
-            Math.abs(
-              deltaY
-            );
+            Math.abs(deltaX) >
+            Math.abs(deltaY);
         }
 
-        if (!horizontalLock) {
-          return;
-        }
+        if (!horizontalLock) return;
       }
 
       e.preventDefault();
 
       dx = Math.max(
         -90,
-        Math.min(
-          90,
-          deltaX
-        )
+        Math.min(90, deltaX)
       );
 
       bubble.style.transform =
@@ -1720,21 +1798,16 @@ function wireSwipeToReply(
 
       row.classList.toggle(
         "swipe-armed",
-        Math.abs(dx) >
-          THRESHOLD
+        Math.abs(dx) > THRESHOLD
       );
     },
-    {
-      passive: false,
-    }
+    { passive: false }
   );
 
   row.addEventListener(
     "touchend",
     () => {
-      if (!dragging) {
-        return;
-      }
+      if (!dragging) return;
 
       dragging = false;
 
@@ -1750,19 +1823,12 @@ function wireSwipeToReply(
 
       if (
         horizontalLock &&
-        Math.abs(dx) >
-          THRESHOLD
+        Math.abs(dx) > THRESHOLD
       ) {
-        setReplyTarget(
-          message
-        );
+        setReplyTarget(message);
 
-        if (
-          navigator.vibrate
-        ) {
-          navigator.vibrate(
-            15
-          );
+        if (navigator.vibrate) {
+          navigator.vibrate(15);
         }
       }
 
@@ -1834,36 +1900,24 @@ async function toggleReaction(
 ) {
   const existing =
     (
-      state.reactions[
-        messageId
-      ] || []
+      state.reactions[messageId] || []
     ).find(
       (r) =>
-        r.user_id ===
-          state.me.id &&
+        r.user_id === state.me.id &&
         r.emoji === emoji
     );
 
   if (existing) {
     await supabase
-      .from(
-        "message_reactions"
-      )
+      .from("message_reactions")
       .delete()
-      .eq(
-        "id",
-        existing.id
-      );
+      .eq("id", existing.id);
   } else {
     await supabase
-      .from(
-        "message_reactions"
-      )
+      .from("message_reactions")
       .insert({
-        message_id:
-          messageId,
-        user_id:
-          state.me.id,
+        message_id: messageId,
+        user_id: state.me.id,
         emoji,
       });
   }
@@ -1872,15 +1926,9 @@ async function toggleReaction(
 }
 
 // ===============================================================
-// MEDIA UPLOAD HELPERS
+// MEDIA
 // ===============================================================
 
-/**
- * تنظيف/تحديد امتداد الملف.
- *
- * لا نستخدم اسم الملف الأصلي كمفتاح داخل Supabase.
- * نستخدم فقط امتدادًا آمنًا ومعروفًا.
- */
 function getSafeFileExtension(
   file,
   forcedExtension = null
@@ -1892,10 +1940,7 @@ function getSafeFileExtension(
   }
 
   const mime =
-    (
-      file?.type ||
-      ""
-    ).toLowerCase();
+    (file?.type || "").toLowerCase();
 
   const mimeMap = {
     "image/jpeg": "jpg",
@@ -1905,7 +1950,6 @@ function getSafeFileExtension(
     "image/gif": "gif",
     "image/bmp": "bmp",
     "image/svg+xml": "svg",
-
     "audio/webm": "webm",
     "audio/ogg": "ogg",
     "audio/mpeg": "mp3",
@@ -1919,13 +1963,8 @@ function getSafeFileExtension(
     return mimeMap[mime];
   }
 
-  // محاولة استخراج الامتداد فقط كحل أخير
-  // مع تنظيفه بالكامل.
-  const originalName =
-    file?.name || "";
-
   const match =
-    originalName.match(
+    (file?.name || "").match(
       /\.([a-zA-Z0-9]+)$/
     );
 
@@ -1938,17 +1977,12 @@ function getSafeFileExtension(
           ""
         );
 
-    if (ext) {
-      return ext;
-    }
+    if (ext) return ext;
   }
 
   return "bin";
 }
 
-/**
- * إنشاء UUID آمن.
- */
 function createUploadUUID() {
   if (
     window.crypto &&
@@ -1958,14 +1992,13 @@ function createUploadUUID() {
     return window.crypto.randomUUID();
   }
 
-  // fallback للمتصفحات التي لا تدعم randomUUID
   return (
     "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
   ).replace(
     /[xy]/g,
     (c) => {
       const r =
-        Math.random() * 16 | 0;
+        (Math.random() * 16) | 0;
 
       const v =
         c === "x"
@@ -1977,29 +2010,12 @@ function createUploadUUID() {
   );
 }
 
-/**
- * رفع ملف إلى Supabase Storage.
- *
- * المفتاح النهائي:
- *
- * UUID.ext
- *
- * مثال:
- *
- * 550e8400-e29b-41d4-a716-446655440000.jpg
- *
- * ولا يتم استخدام:
- *
- * اسم الصورة العربية 2026 صورة جديدة.jpg
- */
 async function uploadMediaToSupabase(
   file,
   options = {}
 ) {
   if (!file) {
-    throw new Error(
-      "لم يتم اختيار ملف"
-    );
+    throw new Error("لم يتم اختيار ملف");
   }
 
   if (!state.me) {
@@ -2015,12 +2031,10 @@ async function uploadMediaToSupabase(
   }
 
   const bucket =
-    options.bucket ||
-    "attachments";
+    options.bucket || "attachments";
 
   const folder =
-    options.folder ||
-    state.me.id;
+    options.folder || state.me.id;
 
   const extension =
     getSafeFileExtension(
@@ -2031,7 +2045,6 @@ async function uploadMediaToSupabase(
   const uuid =
     createUploadUUID();
 
-  // لا نستخدم اسم الملف الأصلي إطلاقاً
   const storagePath =
     `${folder}/${uuid}.${extension}`;
 
@@ -2040,25 +2053,21 @@ async function uploadMediaToSupabase(
     options.contentType ||
     "application/octet-stream";
 
-  const {
-    error,
-  } = await supabase
-    .storage
-    .from(bucket)
-    .upload(
-      storagePath,
-      file,
-      {
-        cacheControl:
-          "3600",
-        contentType,
-        upsert: false,
-      }
-    );
+  const { error } =
+    await supabase
+      .storage
+      .from(bucket)
+      .upload(
+        storagePath,
+        file,
+        {
+          cacheControl: "3600",
+          contentType,
+          upsert: false,
+        }
+      );
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
   const {
     data: publicData,
@@ -2088,7 +2097,7 @@ async function uploadMediaToSupabase(
 }
 
 // ===============================================================
-// MEDIA LOADING STATE
+// MEDIA UI
 // ===============================================================
 
 function getMediaUploadStatusElement() {
@@ -2108,9 +2117,7 @@ function getMediaUploadStatusElement() {
 
   if (!el) {
     el =
-      document.createElement(
-        "div"
-      );
+      document.createElement("div");
 
     el.id =
       "media-upload-status";
@@ -2128,20 +2135,15 @@ function getMediaUploadStatusElement() {
       "polite"
     );
 
-    // نضعه داخل منطقة المحادثة إن وجدت
     const composer =
       document.querySelector(
         "#composer-form"
       );
 
     if (composer) {
-      composer.appendChild(
-        el
-      );
+      composer.appendChild(el);
     } else {
-      document.body.appendChild(
-        el
-      );
+      document.body.appendChild(el);
     }
   }
 
@@ -2170,7 +2172,6 @@ function setMediaUploadingState(
     !active
   );
 
-  // منع اختيار ملف آخر أثناء الرفع
   const attachInput =
     $("#attach-input");
 
@@ -2179,7 +2180,6 @@ function setMediaUploadingState(
       active;
   }
 
-  // منع الميكروفون أثناء رفع الصورة
   const micBtn =
     $("#mic-btn");
 
@@ -2188,7 +2188,6 @@ function setMediaUploadingState(
       active;
   }
 
-  // منع زر الإرسال أثناء الرفع
   const submitBtn =
     $("#composer-form button[type='submit']");
 
@@ -2207,22 +2206,6 @@ function setMediaUploadingState(
 // SEND MESSAGE
 // ===============================================================
 
-/**
- * إرسال الرسالة.
- *
- * إذا كانت الرسالة تحتوي على attachmentFile:
- *
- * 1. يبدأ الرفع.
- * 2. ينتظر await حتى ينتهي.
- * 3. يحصل على Public URL.
- * 4. بعدها فقط يتم INSERT في messages.
- *
- * وبالتالي لا يمكن أن تصل رسالة تحتوي على:
- *
- * attachment_url = null
- *
- * بسبب تأخر الرفع.
- */
 async function sendMessage({
   content,
   attachmentFile = null,
@@ -2233,19 +2216,12 @@ async function sendMessage({
   const conv =
     state.activeConversation;
 
-  if (!conv) return;
-
-  if (state.mediaUploading) {
+  if (!conv || state.mediaUploading) {
     return;
   }
 
   const replyToId =
-    state.replyingTo?.id ||
-    null;
-
-  // -------------------------------------------------------------
-  // OFFLINE TEXT MESSAGE
-  // -------------------------------------------------------------
+    state.replyingTo?.id || null;
 
   if (
     !state.isOnline &&
@@ -2254,60 +2230,36 @@ async function sendMessage({
   ) {
     const optimistic = {
       id: `local-${Date.now()}`,
-      conversation_id:
-        conv.id,
-      sender_id:
-        state.me.id,
-      content:
-        content || null,
-      attachment_url:
-        null,
-      attachment_type:
-        null,
-      reply_to_id:
-        replyToId,
-      status:
-        "pending",
+      conversation_id: conv.id,
+      sender_id: state.me.id,
+      content: content || null,
+      attachment_url: null,
+      attachment_type: null,
+      reply_to_id: replyToId,
+      status: "pending",
       created_at:
         new Date().toISOString(),
-      _pending:
-        true,
+      _pending: true,
     };
 
-    state.messages.push(
-      optimistic
-    );
+    state.messages.push(optimistic);
 
     renderMessages();
 
     await queueOutboxMessage({
-      conversation_id:
-        conv.id,
-      sender_id:
-        state.me.id,
-      content:
-        content || null,
-      attachment_url:
-        null,
-      attachment_type:
-        null,
-      reply_to_id:
-        replyToId,
+      conversation_id: conv.id,
+      sender_id: state.me.id,
+      content: content || null,
+      attachment_url: null,
+      attachment_type: null,
+      reply_to_id: replyToId,
     });
 
     clearReply();
-
     return;
   }
 
-  // -------------------------------------------------------------
-  // MEDIA CANNOT BE UPLOADED OFFLINE
-  // -------------------------------------------------------------
-
-  if (
-    !state.isOnline &&
-    attachmentFile
-  ) {
+  if (!state.isOnline && attachmentFile) {
     showAuthError(
       "لا يمكن رفع الصورة أو الوسائط بدون اتصال بالإنترنت. أعد المحاولة بعد عودة الاتصال."
     );
@@ -2321,25 +2273,13 @@ async function sendMessage({
   let finalAttachmentType =
     attachmentType;
 
-  // -------------------------------------------------------------
-  // UPLOAD FIRST
-  // -------------------------------------------------------------
-
   if (attachmentFile) {
     try {
-      const isImage =
-        attachmentType ===
-        "image";
-
-      const isAudio =
-        attachmentType ===
-        "audio";
-
       setMediaUploadingState(
         true,
-        isImage
+        attachmentType === "image"
           ? "جاري رفع الصورة، يرجى الانتظار..."
-          : isAudio
+          : attachmentType === "audio"
           ? "جاري رفع الرسالة الصوتية، يرجى الانتظار..."
           : "جاري رفع الملف، يرجى الانتظار..."
       );
@@ -2348,10 +2288,8 @@ async function sendMessage({
         await uploadMediaToSupabase(
           attachmentFile,
           {
-            bucket:
-              "attachments",
-            folder:
-              state.me.id,
+            bucket: "attachments",
+            folder: state.me.id,
             extension:
               attachmentExtension,
             contentType:
@@ -2359,7 +2297,6 @@ async function sendMessage({
           }
         );
 
-      // لا يتم استعمال الرابط إلا بعد اكتمال upload
       finalAttachmentUrl =
         uploaded.publicUrl;
 
@@ -2392,15 +2329,9 @@ async function sendMessage({
 
       return;
     } finally {
-      setMediaUploadingState(
-        false
-      );
+      setMediaUploadingState(false);
     }
   }
-
-  // -------------------------------------------------------------
-  // SAFETY CHECK
-  // -------------------------------------------------------------
 
   if (
     attachmentFile &&
@@ -2413,44 +2344,61 @@ async function sendMessage({
     return;
   }
 
-  // -------------------------------------------------------------
-  // DATABASE INSERT
-  // -------------------------------------------------------------
-
   const {
+    data: insertedMessage,
     error,
   } = await supabase
     .from("messages")
     .insert({
-      conversation_id:
-        conv.id,
-      sender_id:
-        state.me.id,
-      content:
-        content || null,
+      conversation_id: conv.id,
+      sender_id: state.me.id,
+      content: content || null,
       attachment_url:
-        finalAttachmentUrl ||
-        null,
+        finalAttachmentUrl || null,
       attachment_type:
-        finalAttachmentType ||
-        null,
-      reply_to_id:
-        replyToId,
-      status:
-        "sent",
-    });
+        finalAttachmentType || null,
+      reply_to_id: replyToId,
+      status: "sent",
+    })
+    .select()
+    .single();
 
   if (error) {
-    showAuthError(
-      error.message
-    );
-
+    showAuthError(error.message);
     return;
   }
 
-  // -------------------------------------------------------------
-  // UPDATE CONVERSATION
-  // -------------------------------------------------------------
+  // =============================================================
+  // LIVE: تحديث الرسالة في القائمة فور نجاح INSERT
+  // =============================================================
+
+  if (insertedMessage) {
+    const exists =
+      state.messages.some(
+        (m) =>
+          m.id === insertedMessage.id
+      );
+
+    if (!exists && state.activeConversation?.id === conv.id) {
+      state.messages.push(
+        insertedMessage
+      );
+
+      renderMessages();
+
+      await cacheMessages(
+        conv.id,
+        [insertedMessage]
+      );
+    }
+
+    await patchContactUIOnNewMessage(
+      insertedMessage,
+      {
+        incrementUnread: false,
+      }
+    );
+  }
 
   const preview =
     content ||
@@ -2459,22 +2407,17 @@ async function sendMessage({
         finalAttachmentType,
     });
 
-  // معالجة استثناءات: الرسالة أُرسلت بنجاح بالفعل (أعلاه)، لذلك أي خطأ هنا
-  // (مثل انقطاع مؤقت 503 من Supabase) يجب ألا يمنع تنظيف الرد/مؤشر الكتابة —
-  // فقط نسجّل الخطأ دون مقاطعة تجربة المستخدم.
   try {
-    const { error: convUpdateError } = await supabase
+    const {
+      error: convUpdateError,
+    } = await supabase
       .from("conversations")
       .update({
-        last_message:
-          preview,
+        last_message: preview,
         last_message_at:
           new Date().toISOString(),
       })
-      .eq(
-        "id",
-        conv.id
-      );
+      .eq("id", conv.id);
 
     if (convUpdateError) {
       console.error(
@@ -2495,15 +2438,13 @@ async function sendMessage({
 }
 
 // ===============================================================
-// ATTACHMENT INPUT
+// ATTACHMENT
 // ===============================================================
 
 async function handleAttachmentUpload(e) {
   const file =
     e.target.files?.[0];
 
-  // إعادة input لحالته الطبيعية
-  // حتى يمكن اختيار نفس الملف مرة أخرى لاحقاً.
   const resetInput = () => {
     e.target.value = "";
   };
@@ -2521,34 +2462,19 @@ async function handleAttachmentUpload(e) {
     return;
   }
 
-  // -------------------------------------------------------------
-  // IMAGE TYPE
-  // -------------------------------------------------------------
-
   let type = "file";
 
   if (
     file.type &&
-    file.type.startsWith(
-      "image/"
-    )
+    file.type.startsWith("image/")
   ) {
     type = "image";
   } else if (
     file.type &&
-    file.type.startsWith(
-      "audio/"
-    )
+    file.type.startsWith("audio/")
   ) {
     type = "audio";
   }
-
-  // -------------------------------------------------------------
-  // إرسال الملف إلى sendMessage
-  //
-  // sendMessage هو المسؤول عن:
-  // upload -> await -> URL -> INSERT
-  // -------------------------------------------------------------
 
   await sendMessage({
     content: null,
@@ -2560,7 +2486,7 @@ async function handleAttachmentUpload(e) {
 }
 
 // ===============================================================
-// AVATAR UPLOAD
+// AVATAR
 // ===============================================================
 
 async function handleAvatarUpload(e) {
@@ -2579,10 +2505,8 @@ async function handleAvatarUpload(e) {
       await uploadMediaToSupabase(
         file,
         {
-          bucket:
-            "avatars",
-          folder:
-            state.me.id,
+          bucket: "avatars",
+          folder: state.me.id,
         }
       );
 
@@ -2618,16 +2542,13 @@ async function handleAvatarUpload(e) {
         )
     );
   } finally {
-    setMediaUploadingState(
-      false
-    );
-
+    setMediaUploadingState(false);
     e.target.value = "";
   }
 }
 
 // ===============================================================
-// WALLPAPER UPLOAD
+// WALLPAPER
 // ===============================================================
 
 async function handleWallpaperUpload(e) {
@@ -2646,10 +2567,8 @@ async function handleWallpaperUpload(e) {
       await uploadMediaToSupabase(
         file,
         {
-          bucket:
-            "wallpapers",
-          folder:
-            state.me.id,
+          bucket: "wallpapers",
+          folder: state.me.id,
         }
       );
 
@@ -2682,16 +2601,13 @@ async function handleWallpaperUpload(e) {
         )
     );
   } finally {
-    setMediaUploadingState(
-      false
-    );
-
+    setMediaUploadingState(false);
     e.target.value = "";
   }
 }
 
 // ===============================================================
-// VOICE RECORDING
+// VOICE
 // ===============================================================
 
 async function toggleRecording() {
@@ -2703,9 +2619,7 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
-  if (!state.activeConversation) {
-    return;
-  }
+  if (!state.activeConversation) return;
 
   if (
     !navigator.mediaDevices ||
@@ -2728,25 +2642,19 @@ async function startRecording() {
 
   try {
     const stream =
-      await navigator.mediaDevices.getUserMedia(
-        {
-          audio: true,
-        }
-      );
+      await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
 
     const mediaRecorder =
-      new MediaRecorder(
-        stream
-      );
+      new MediaRecorder(stream);
 
     const chunks = [];
 
     mediaRecorder.ondataavailable =
       (e) => {
         if (e.data?.size) {
-          chunks.push(
-            e.data
-          );
+          chunks.push(e.data);
         }
       };
 
@@ -2757,8 +2665,7 @@ async function startRecording() {
       chunks,
       stream,
       seconds: 0,
-      timerInterval:
-        null,
+      timerInterval: null,
     };
 
     $("#recording-bar")?.classList.remove(
@@ -2778,34 +2685,23 @@ async function startRecording() {
 
     state.recording.timerInterval =
       setInterval(() => {
-        if (!state.recording) {
-          return;
-        }
+        if (!state.recording) return;
 
-        state.recording.seconds +=
-          1;
+        state.recording.seconds += 1;
 
         const mm =
           String(
             Math.floor(
-              state.recording
-                .seconds /
+              state.recording.seconds /
                 60
             )
-          ).padStart(
-            2,
-            "0"
-          );
+          ).padStart(2, "0");
 
         const ss =
           String(
-            state.recording
-              .seconds %
+            state.recording.seconds %
               60
-          ).padStart(
-            2,
-            "0"
-          );
+          ).padStart(2, "0");
 
         $("#recording-timer").textContent =
           `${mm}:${ss}`;
@@ -2829,29 +2725,17 @@ async function stopAndSendRecording() {
   if (!rec) return;
 
   const blob =
-    await finalizeRecording(
-      rec
-    );
+    await finalizeRecording(rec);
 
   resetRecordingUI();
 
   if (!blob) return;
 
-  // -------------------------------------------------------------
-  // مهم:
-  //
-  // لا نقوم برفع الصوت هنا مباشرة.
-  // نمرره إلى sendMessage حتى يكون المسار:
-  //
-  // Blob -> upload -> await -> Public URL -> INSERT
-  // -------------------------------------------------------------
-
   await sendMessage({
     content: null,
     attachmentFile: blob,
     attachmentType: "audio",
-    attachmentExtension:
-      "webm",
+    attachmentExtension: "webm",
   });
 }
 
@@ -2861,11 +2745,7 @@ function cancelRecording() {
 
   if (!rec) return;
 
-  finalizeRecording(
-    rec,
-    true
-  );
-
+  finalizeRecording(rec, true);
   resetRecordingUI();
 }
 
@@ -2873,51 +2753,43 @@ function finalizeRecording(
   rec,
   discard = false
 ) {
-  return new Promise(
-    (resolve) => {
-      clearInterval(
-        rec.timerInterval
-      );
+  return new Promise((resolve) => {
+    clearInterval(
+      rec.timerInterval
+    );
 
-      rec.mediaRecorder.onstop =
-        () => {
-          rec.stream
-            .getTracks()
-            .forEach((t) =>
-              t.stop()
-            );
+    rec.mediaRecorder.onstop =
+      () => {
+        rec.stream
+          .getTracks()
+          .forEach((t) => t.stop());
 
-          if (discard) {
-            resolve(null);
-            return;
-          }
+        if (discard) {
+          resolve(null);
+          return;
+        }
 
-          const mime =
-            rec.mediaRecorder
-              .mimeType ||
-            "audio/webm";
+        const mime =
+          rec.mediaRecorder.mimeType ||
+          "audio/webm";
 
-          resolve(
-            new Blob(
-              rec.chunks,
-              {
-                type: mime,
-              }
-            )
-          );
-        };
+        resolve(
+          new Blob(
+            rec.chunks,
+            { type: mime }
+          )
+        );
+      };
 
-      if (
-        rec.mediaRecorder
-          .state !==
-        "inactive"
-      ) {
-        rec.mediaRecorder.stop();
-      } else {
-        resolve(null);
-      }
+    if (
+      rec.mediaRecorder.state !==
+      "inactive"
+    ) {
+      rec.mediaRecorder.stop();
+    } else {
+      resolve(null);
     }
-  );
+  });
 }
 
 function resetRecordingUI() {
@@ -2927,9 +2799,7 @@ function resetRecordingUI() {
     "hidden"
   );
 
-  if (
-    $("#recording-timer")
-  ) {
+  if ($("#recording-timer")) {
     $("#recording-timer").textContent =
       "00:00";
   }
@@ -2956,9 +2826,7 @@ async function flushOutbox() {
   const pending =
     await getOutbox();
 
-  if (!pending.length) {
-    return;
-  }
+  if (!pending.length) return;
 
   for (const item of pending) {
     const {
@@ -2968,49 +2836,63 @@ async function flushOutbox() {
     } = item;
 
     const {
+      data: inserted,
       error,
     } = await supabase
       .from("messages")
       .insert({
         ...msg,
         status: "sent",
-      });
+      })
+      .select()
+      .single();
 
     if (!error) {
-      await removeFromOutbox(
-        local_id
-      );
+      await removeFromOutbox(local_id);
 
-      await supabase
-        .from("conversations")
-        .update({
-          last_message:
-            msg.content ||
-            messagePreviewText({
-              attachment_type:
-                msg.attachment_type,
-            }),
-
-          last_message_at:
-            new Date().toISOString(),
-        })
-        .eq(
-          "id",
-          msg.conversation_id
+      try {
+        await supabase
+          .from("conversations")
+          .update({
+            last_message:
+              msg.content ||
+              messagePreviewText({
+                attachment_type:
+                  msg.attachment_type,
+              }),
+            last_message_at:
+              new Date().toISOString(),
+          })
+          .eq(
+            "id",
+            msg.conversation_id
+          );
+      } catch (err) {
+        console.error(
+          "Outbox conversation update failed:",
+          err
         );
+      }
+
+      if (inserted) {
+        await patchContactUIOnNewMessage(
+          inserted,
+          {
+            incrementUnread: false,
+          }
+        );
+      }
     }
   }
 
   if (state.activeConversation) {
     state.messages =
       state.messages.filter(
-        (m) =>
-          !m._pending
+        (m) => !m._pending
       );
 
     await loadMessages(
-      state.activeConversation
-        .id
+      state.activeConversation.id
     );
   }
 }
@@ -3019,42 +2901,44 @@ async function flushOutbox() {
 // REALTIME RESUBSCRIBE
 // ===============================================================
 
+function removeRealtimeChannel(channel) {
+  if (!channel) return;
+
+  try {
+    supabase.removeChannel(channel);
+  } catch (err) {
+    console.error(
+      "removeRealtimeChannel failed:",
+      err
+    );
+  }
+}
+
 function resubscribeRealtime() {
   if (!state.me) return;
 
-  if (
+  removeRealtimeChannel(
     state.presenceChannel
-  ) {
-    supabase.removeChannel(
-      state.presenceChannel
-    );
-  }
+  );
 
+  state.presenceChannel = null;
   subscribeGlobalPresence();
 
-  if (
+  removeRealtimeChannel(
     state.inboxChannel
-  ) {
-    supabase.removeChannel(
-      state.inboxChannel
-    );
-  }
+  );
 
+  state.inboxChannel = null;
   subscribeInboxUpdates();
 
-  if (
+  removeRealtimeChannel(
     state.globalMsgChannel
-  ) {
-    supabase.removeChannel(
-      state.globalMsgChannel
-    );
-  }
+  );
 
+  state.globalMsgChannel = null;
   subscribeGlobalMessageWatch();
 
-  if (
-    state.activeConversation
-  ) {
+  if (state.activeConversation) {
     subscribeToConversation(
       state.activeConversation.id
     );
@@ -3072,25 +2956,17 @@ function resubscribeRealtime() {
 function subscribeToConversation(
   conversationId
 ) {
-  if (state.msgChannel) {
-    supabase.removeChannel(
-      state.msgChannel
-    );
-  }
+  removeRealtimeChannel(
+    state.msgChannel
+  );
 
-  if (state.typingChannel) {
-    supabase.removeChannel(
-      state.typingChannel
-    );
-  }
+  removeRealtimeChannel(
+    state.typingChannel
+  );
 
-  if (
+  removeRealtimeChannel(
     state.reactionsChannel
-  ) {
-    supabase.removeChannel(
-      state.reactionsChannel
-    );
-  }
+  );
 
   state.msgChannel =
     supabase
@@ -3100,43 +2976,62 @@ function subscribeToConversation(
       .on(
         "postgres_changes",
         {
-          event:
-            "INSERT",
-          schema:
-            "public",
-          table:
-            "messages",
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
           filter:
             `conversation_id=eq.${conversationId}`,
         },
         async (payload) => {
-          // منع التكرار إن كانت الرسالة موجودة بالفعل
+          const message =
+            payload.new;
+
+          // =======================================================
+          // LIVE CHAT APPEND
+          // =======================================================
+
           const exists =
             state.messages.some(
               (m) =>
-                m.id ===
-                payload.new.id
+                m.id === message.id
             );
 
           if (!exists) {
             state.messages.push(
-              payload.new
+              message
+            );
+
+            renderMessages();
+
+            await cacheMessages(
+              conversationId,
+              [message]
             );
           }
 
-          renderMessages();
+          // =======================================================
+          // LIVE CONTACT PATCH
+          // =======================================================
 
-          cacheMessages(
-            conversationId,
-            [payload.new]
+          await patchContactUIOnNewMessage(
+            message,
+            {
+              incrementUnread:
+                message.sender_id !==
+                state.me.id,
+            }
           );
 
           if (
-            payload.new
-              .sender_id !==
+            message.sender_id !==
             state.me.id
           ) {
             playNotificationSound();
+
+            // المحادثة مفتوحة، لذلك لا نزيد العداد.
+            clearUnreadBadge(
+              conversationId
+            );
 
             await markConversationRead(
               conversationId
@@ -3147,12 +3042,9 @@ function subscribeToConversation(
       .on(
         "postgres_changes",
         {
-          event:
-            "UPDATE",
-          schema:
-            "public",
-          table:
-            "messages",
+          event: "UPDATE",
+          schema: "public",
+          table: "messages",
           filter:
             `conversation_id=eq.${conversationId}`,
         },
@@ -3165,9 +3057,7 @@ function subscribeToConversation(
             );
 
           if (idx > -1) {
-            state.messages[
-              idx
-            ] =
+            state.messages[idx] =
               payload.new;
           }
 
@@ -3176,9 +3066,9 @@ function subscribeToConversation(
       )
       .subscribe();
 
-  // -------------------------------------------------------------
+  // =============================================================
   // TYPING
-  // -------------------------------------------------------------
+  // =============================================================
 
   state.typingChannel =
     supabase
@@ -3189,10 +3079,8 @@ function subscribeToConversation(
         "postgres_changes",
         {
           event: "*",
-          schema:
-            "public",
-          table:
-            "typing_status",
+          schema: "public",
+          table: "typing_status",
           filter:
             `conversation_id=eq.${conversationId}`,
         },
@@ -3214,9 +3102,9 @@ function subscribeToConversation(
       )
       .subscribe();
 
-  // -------------------------------------------------------------
+  // =============================================================
   // REACTIONS
-  // -------------------------------------------------------------
+  // =============================================================
 
   state.reactionsChannel =
     supabase
@@ -3227,10 +3115,8 @@ function subscribeToConversation(
         "postgres_changes",
         {
           event: "*",
-          schema:
-            "public",
-          table:
-            "message_reactions",
+          schema: "public",
+          table: "message_reactions",
         },
         (payload) => {
           const row =
@@ -3259,34 +3145,50 @@ function subscribeToConversation(
 async function markConversationRead(
   conversationId
 ) {
-  // معالجة استثناءات محلية: تُستدعى هذه الدالة أيضاً من داخل معالج Realtime
-  // (subscribeToConversation) الذي لا يوفّر أي try/catch خاص به، لذا يجب أن
-  // تكون آمنة ذاتياً حتى لا يتسبب خطأ شبكي عابر (503 مثلاً) في استثناء غير مُعالَج.
+  if (!state.me || !conversationId) {
+    return;
+  }
+
   try {
-    const { error } = await supabase
-      .from("messages")
-      .update({
-        status: "read",
-      })
-      .eq(
-        "conversation_id",
-        conversationId
-      )
-      .neq(
-        "sender_id",
-        state.me.id
-      )
-      .neq(
-        "status",
-        "read"
-      );
+    const { error } =
+      await supabase
+        .from("messages")
+        .update({
+          status: "read",
+        })
+        .eq(
+          "conversation_id",
+          conversationId
+        )
+        .neq(
+          "sender_id",
+          state.me.id
+        )
+        .neq(
+          "status",
+          "read"
+        );
 
     if (error) {
-      console.error("markConversationRead failed:", error);
+      console.error(
+        "markConversationRead failed:",
+        error
+      );
     }
   } catch (err) {
-    console.error("markConversationRead network error:", err);
+    console.error(
+      "markConversationRead network error:",
+      err
+    );
   }
+
+  // =============================================================
+  // LIVE: تصفير الشارة حتى لو لم يكن هناك صف في DOM سابقاً
+  // =============================================================
+
+  clearUnreadBadge(
+    conversationId
+  );
 }
 
 // ===============================================================
@@ -3302,38 +3204,42 @@ function handleTypingInput() {
 
   state.typingTimeout =
     setTimeout(
-      () =>
-        setTyping(false),
+      () => setTyping(false),
       2000
     );
 }
 
-async function setTyping(
-  isTyping
-) {
+async function setTyping(isTyping) {
   const conv =
     state.activeConversation;
 
-  if (!conv) return;
+  if (!conv || !state.me) return;
 
-  await supabase
-    .from("typing_status")
-    .upsert(
-      {
-        conversation_id:
-          conv.id,
-        user_id:
-          state.me.id,
-        is_typing:
-          isTyping,
-        updated_at:
-          new Date().toISOString(),
-      },
-      {
-        onConflict:
-          "conversation_id,user_id",
-      }
+  try {
+    await supabase
+      .from("typing_status")
+      .upsert(
+        {
+          conversation_id:
+            conv.id,
+          user_id:
+            state.me.id,
+          is_typing:
+            isTyping,
+          updated_at:
+            new Date().toISOString(),
+        },
+        {
+          onConflict:
+            "conversation_id,user_id",
+        }
+      );
+  } catch (err) {
+    console.error(
+      "setTyping failed:",
+      err
     );
+  }
 }
 
 // ===============================================================
@@ -3341,14 +3247,15 @@ async function setTyping(
 // ===============================================================
 
 function subscribeGlobalPresence() {
+  if (!state.me) return;
+
   state.presenceChannel =
     supabase.channel(
       "presence:global",
       {
         config: {
           presence: {
-            key:
-              state.me.id,
+            key: state.me.id,
           },
         },
       }
@@ -3358,8 +3265,7 @@ function subscribeGlobalPresence() {
     .on(
       "presence",
       {
-        event:
-          "sync",
+        event: "sync",
       },
       () => {
         const presState =
@@ -3371,9 +3277,8 @@ function subscribeGlobalPresence() {
           presState
         ).forEach(
           (id) =>
-            (state.onlineMap[
-              id
-            ] = true)
+            (state.onlineMap[id] =
+              true)
         );
 
         loadContacts();
@@ -3391,8 +3296,7 @@ function subscribeGlobalPresence() {
     .on(
       "presence",
       {
-        event:
-          "leave",
+        event: "leave",
       },
       async ({
         leftPresences,
@@ -3453,9 +3357,7 @@ async function refreshPresenceLabel(
   if (!label) return;
 
   if (
-    state.onlineMap[
-      otherId
-    ]
+    state.onlineMap[otherId]
   ) {
     label.textContent =
       state.t.online;
@@ -3464,23 +3366,30 @@ async function refreshPresenceLabel(
   }
 
   let profile = null;
+
   try {
-    const { data, error } = await supabase
+    const {
+      data,
+      error,
+    } = await supabase
       .from("profiles")
       .select("last_seen")
-      .eq(
-        "id",
-        otherId
-      )
+      .eq("id", otherId)
       .single();
 
     if (error) {
-      console.error("refreshPresenceLabel failed:", error);
+      console.error(
+        "refreshPresenceLabel failed:",
+        error
+      );
     } else {
       profile = data;
     }
   } catch (err) {
-    console.error("refreshPresenceLabel network error:", err);
+    console.error(
+      "refreshPresenceLabel network error:",
+      err
+    );
   }
 
   if (profile?.last_seen) {
@@ -3491,15 +3400,12 @@ async function refreshPresenceLabel(
 
     const time =
       d.toLocaleTimeString(
-        state.lang ===
-          "ar"
+        state.lang === "ar"
           ? "ar-SA"
           : "en-US",
         {
-          hour:
-            "2-digit",
-          minute:
-            "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
         }
       );
 
@@ -3508,8 +3414,7 @@ async function refreshPresenceLabel(
       new Date().toDateString()
         ? time
         : d.toLocaleDateString(
-            state.lang ===
-              "ar"
+            state.lang === "ar"
               ? "ar-SA"
               : "en-US"
           ) +
@@ -3519,8 +3424,7 @@ async function refreshPresenceLabel(
     label.textContent =
       `${state.t.last_seen} ${dateLabel}`;
   } else {
-    label.textContent =
-      "";
+    label.textContent = "";
   }
 }
 
@@ -3529,34 +3433,44 @@ async function refreshPresenceLabel(
 // ===============================================================
 
 function subscribeInboxUpdates() {
+  if (!state.me) return;
+
   state.inboxChannel =
     supabase
-      .channel(
-        "inbox-updates"
-      )
+      .channel("inbox-updates")
       .on(
         "postgres_changes",
         {
           event: "*",
-          schema:
-            "public",
-          table:
-            "conversations",
+          schema: "public",
+          table: "conversations",
         },
         (payload) => {
           const row =
             payload.new;
 
+          if (!row) return;
+
           if (
-            row &&
-            (
-              row.user_id ===
-                state.me.id ||
-              row.admin_id ===
-                state.me.id
-            )
+            row.user_id ===
+              state.me.id ||
+            row.admin_id ===
+              state.me.id
           ) {
-            loadContacts();
+            // =====================================================
+            // LIVE: تحديث صف المحادثة بدلاً من إعادة تحميل القائمة
+            // =====================================================
+
+            if (
+              payload.eventType ===
+                "UPDATE" ||
+              payload.eventType ===
+                "INSERT"
+            ) {
+              patchContactUIOnConversationUpdate(
+                row
+              );
+            }
           }
         }
       )
@@ -3568,9 +3482,7 @@ function subscribeInboxUpdates() {
 // ===============================================================
 
 function subscribeGlobalMessageWatch() {
-  if (
-    !state.me?.is_admin
-  ) {
+  if (!state.me?.is_admin) {
     return;
   }
 
@@ -3582,14 +3494,11 @@ function subscribeGlobalMessageWatch() {
       .on(
         "postgres_changes",
         {
-          event:
-            "INSERT",
-          schema:
-            "public",
-          table:
-            "messages",
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
         },
-        (payload) => {
+        async (payload) => {
           const msg =
             payload.new;
 
@@ -3597,20 +3506,48 @@ function subscribeGlobalMessageWatch() {
             msg.sender_id ===
             state.me.id
           ) {
+            // حتى الرسالة الخاصة بنا يجب أن تحدّث preview
+            await patchContactUIOnNewMessage(
+              msg,
+              {
+                incrementUnread: false,
+              }
+            );
+
             return;
           }
 
-          if (
+          const isActive =
             state.activeConversation &&
             msg.conversation_id ===
-              state.activeConversation.id
-          ) {
+              state.activeConversation.id;
+
+          // ========================================================
+          // LIVE UI PATCH
+          // ========================================================
+
+          await patchContactUIOnNewMessage(
+            msg,
+            {
+              incrementUnread:
+                !isActive,
+            }
+          );
+
+          // ========================================================
+          // إذا كانت المحادثة مفتوحة، تتم إضافتها داخل الشات
+          // من subscribeToConversation، لذلك لا نكررها هنا.
+          // ========================================================
+
+          if (isActive) {
+            clearUnreadBadge(
+              msg.conversation_id
+            );
+
             return;
           }
 
-          bumpUnreadBadge(
-            msg.conversation_id
-          );
+          playNotificationSound();
         }
       )
       .subscribe();
@@ -3640,203 +3577,35 @@ function wireEmojiPicker() {
   const panel =
     $("#emoji-panel");
 
-  if (!btn || !panel) {
+  if (!btn || !panel) return;
+
+  if (panel.dataset.wired === "1") {
     return;
   }
 
-  if (
-    panel.dataset.wired ===
-    "1"
-  ) {
-    return;
-  }
-
-  panel.dataset.wired =
-    "1";
+  panel.dataset.wired = "1";
 
   const emojis = [
-    "😀",
-    "😃",
-    "😄",
-    "😁",
-    "😆",
-    "😅",
-    "😂",
-    "🤣",
-    "🥲",
-    "🥹",
-    "☺️",
-    "😊",
-    "😇",
-    "🙂",
-    "🙃",
-    "😉",
-    "😌",
-    "😍",
-    "🥰",
-    "😘",
-    "😗",
-    "😙",
-    "😚",
-    "😋",
-    "😛",
-    "😝",
-    "😜",
-    "🤪",
-    "🤨",
-    "🧐",
-    "🤓",
-    "😎",
-    "🥸",
-    "🤩",
-    "🥳",
-    "😏",
-    "😒",
-    "😞",
-    "😔",
-    "😟",
-    "😕",
-    "🙁",
-    "☹️",
-    "😣",
-    "😖",
-    "😫",
-    "😩",
-    "🥺",
-    "😢",
-    "😭",
-    "😮‍💨",
-    "😤",
-    "😠",
-    "😡",
-    "🤬",
-    "🤯",
-    "😳",
-    "🥵",
-    "🥶",
-    "😱",
-    "😨",
-    "😰",
-    "😥",
-    "😓",
-    "🫣",
-    "🤗",
-    "🫡",
-    "🤔",
-    "🤫",
-    "🫠",
-    "🤥",
-    "😶",
-    "😶‍🌫️",
-    "😐",
-    "😑",
-    "😬",
-    "🫨",
-    "😯",
-    "😦",
-    "😧",
-    "😮",
-    "😲",
-    "🥱",
-    "😴",
-    "🤤",
-    "😪",
-    "😵",
-    "😵‍💫",
-    "🤐",
-    "🥴",
-    "🤢",
-    "🤮",
-    "🤧",
-    "😷",
-    "🤒",
-
-    "👍",
-    "👎",
-    "👏",
-    "🙌",
-    "🫶",
-    "👐",
-    "🤲",
-    "🤝",
-    "🙏",
-    "✍️",
-    "💅",
-    "🤳",
-    "💪",
-    "🦾",
-    "🖐️",
-    "✋",
-    "🤚",
-    "👋",
-    "🤙",
-    "🤌",
-    "🤏",
-    "👌",
-    "🫰",
-    "✌️",
-    "🤞",
-    "🤟",
-    "🤘",
-    "👈",
-    "👉",
-    "👆",
-    "🖕",
-    "👇",
-    "☝️",
-    "🫵",
-    "🤜",
-    "🤛",
-
-    "❤️",
-    "🧡",
-    "💛",
-    "💚",
-    "💙",
-    "💜",
-    "🖤",
-    "🤍",
-    "🤎",
-    "💔",
-    "❤️‍🔥",
-    "❤️‍🩹",
-    "❣️",
-    "💕",
-    "💞",
-    "💓",
-    "💗",
-    "💖",
-    "💘",
-    "💝",
-    "🫀",
-    "✨",
-    "💥",
-    "🔥",
-
-    "🎉",
-    "🎊",
-    "🎈",
-    "🎂",
-    "🎁",
-    "⭐",
-    "🌟",
-    "💫",
-    "💯",
-    "✅",
-    "❌",
-    "⚠️",
-    "☕",
-    "🍕",
-    "🍔",
-    "🍟",
-    "⚽",
-    "🏀",
-    "🚀",
-    "📱",
-    "💻",
-    "📸",
-    "🎵",
-    "🎧",
+    "😀","😃","😄","😁","😆","😅","😂","🤣","🥲","🥹",
+    "☺️","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘",
+    "😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐",
+    "🤓","😎","🥸","🤩","🥳","😏","😒","😞","😔","😟",
+    "😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭",
+    "😮‍💨","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱",
+    "😨","😰","😥","😓","🫣","🤗","🫡","🤔","🤫","🫠",
+    "🤥","😶","😶‍🌫️","😐","😑","😬","🫨","😯","😦","😧",
+    "😮","😲","🥱","😴","🤤","😪","😵","😵‍💫","🤐","🥴",
+    "🤢","🤮","🤧","😷","🤒",
+    "👍","👎","👏","🙌","🫶","👐","🤲","🤝","🙏","✍️",
+    "💅","🤳","💪","🦾","🖐️","✋","🤚","👋","🤙","🤌",
+    "🤏","👌","🫰","✌️","🤞","🤟","🤘","👈","👉","👆",
+    "🖕","👇","☝️","🫵","🤜","🤛",
+    "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔",
+    "❤️‍🔥","❤️‍🩹","❣️","💕","💞","💓","💗","💖","💘","💝",
+    "🫀","✨","💥","🔥",
+    "🎉","🎊","🎈","🎂","🎁","⭐","🌟","💫","💯","✅",
+    "❌","⚠️","☕","🍕","🍔","🍟","⚽","🏀","🚀","📱",
+    "💻","📸","🎵","🎧",
   ];
 
   panel.innerHTML =
@@ -3887,9 +3656,7 @@ function wireEmojiPicker() {
         !panel.classList.contains(
           "hidden"
         ) &&
-        !panel.contains(
-          e.target
-        ) &&
+        !panel.contains(e.target) &&
         e.target !== btn
       ) {
         panel.classList.add(
@@ -3904,17 +3671,10 @@ function wireEmojiPicker() {
 // PWA INSTALL
 // ===============================================================
 
-/**
- * الاستماع إلى beforeinstallprompt.
- *
- * لا نعرض نافذة التثبيت مباشرة.
- * نخزن الحدث ثم نعرض للمستخدم زر "تثبيت التطبيق".
- */
 function setupPWAInstallPrompt() {
   window.addEventListener(
     "beforeinstallprompt",
     (event) => {
-      // منع المتصفح من إظهار الطلب تلقائياً
       event.preventDefault();
 
       state.deferredInstallPrompt =
@@ -3924,7 +3684,6 @@ function setupPWAInstallPrompt() {
     }
   );
 
-  // عندما يتم تثبيت التطبيق بنجاح
   window.addEventListener(
     "appinstalled",
     () => {
@@ -3935,8 +3694,6 @@ function setupPWAInstallPrompt() {
     }
   );
 
-  // في بعض المتصفحات يمكن أن يكون التطبيق
-  // مثبتاً مسبقاً.
   window.addEventListener(
     "DOMContentLoaded",
     () => {
@@ -3945,17 +3702,6 @@ function setupPWAInstallPrompt() {
   );
 }
 
-/**
- * إنشاء زر تثبيت التطبيق تلقائياً.
- *
- * نبحث أولاً عن:
- *
- * #install-app-btn
- * #pwa-install-btn
- *
- * وإذا لم يوجد أي منهما،
- * ننشئ الزر تلقائياً داخل شاشة المصادقة.
- */
 function getOrCreatePWAInstallButton() {
   let button =
     document.querySelector(
@@ -3973,9 +3719,7 @@ function getOrCreatePWAInstallButton() {
     const authScreen =
       $("#auth-screen");
 
-    if (!authScreen) {
-      return null;
-    }
+    if (!authScreen) return null;
 
     const wrapper =
       document.createElement(
@@ -3995,7 +3739,6 @@ function getOrCreatePWAInstallButton() {
       </button>
     `;
 
-    // نحاول وضعه في نهاية شاشة المصادقة
     authScreen.appendChild(
       wrapper
     );
@@ -4025,9 +3768,6 @@ function getOrCreatePWAInstallButton() {
   return button;
 }
 
-/**
- * إظهار/إخفاء زر تثبيت التطبيق.
- */
 function refreshPWAInstallButton() {
   const button =
     getOrCreatePWAInstallButton();
@@ -4054,8 +3794,7 @@ function refreshPWAInstallButton() {
       "hidden"
     );
 
-    button.disabled =
-      false;
+    button.disabled = false;
 
     button.setAttribute(
       "aria-label",
@@ -4068,9 +3807,6 @@ function refreshPWAInstallButton() {
   }
 }
 
-/**
- * التحقق من أن التطبيق مثبت بالفعل.
- */
 function isPWAInstalled() {
   const standalone =
     window.matchMedia &&
@@ -4102,24 +3838,18 @@ function isPWAInstalled() {
   );
 }
 
-/**
- * إظهار نافذة التثبيت النظامية.
- */
 async function installPWA() {
   const prompt =
     state.deferredInstallPrompt;
 
-  if (!prompt) {
-    return;
-  }
+  if (!prompt) return;
 
   const button =
     state.installButton ||
     getOrCreatePWAInstallButton();
 
   if (button) {
-    button.disabled =
-      true;
+    button.disabled = true;
 
     button.textContent =
       "جاري فتح التثبيت...";
@@ -4131,20 +3861,15 @@ async function installPWA() {
     const result =
       await prompt.userChoice;
 
+    state.deferredInstallPrompt =
+      null;
+
     if (
       result?.outcome ===
       "accepted"
     ) {
-      state.deferredInstallPrompt =
-        null;
-
       hidePWAInstallButton();
     } else {
-      // يمكن للمتصفح عدم السماح بإعادة
-      // استخدام نفس event بعد رفض الطلب.
-      state.deferredInstallPrompt =
-        null;
-
       hidePWAInstallButton();
     }
   } catch (error) {
@@ -4175,20 +3900,15 @@ function hidePWAInstallButton() {
 }
 
 // ===============================================================
-// SERVICE WORKER / PWA
+// SERVICE WORKER
 // ===============================================================
 
-if (
-  "serviceWorker" in
-  navigator
-) {
+if ("serviceWorker" in navigator) {
   window.addEventListener(
     "load",
     () => {
       navigator.serviceWorker
-        .register(
-          "./sw.js"
-        )
+        .register("./sw.js")
         .catch(() => {});
     }
   );
