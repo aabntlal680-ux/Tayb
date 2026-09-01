@@ -58,6 +58,11 @@ const state = {
   // -------------------------------------------------------------
   mediaUploading: false,
   mediaUploadStatusElement: null,
+
+  // -------------------------------------------------------------
+  // FCM FOREGROUND LISTENER
+  // -------------------------------------------------------------
+  foregroundMessagesUnsub: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -289,6 +294,21 @@ async function enterApp() {
   subscribeGlobalPresence();
   subscribeInboxUpdates();
   subscribeGlobalMessageWatch();
+
+  // تفعيل الاستماع لرسائل FCM الواردة أثناء فتح التطبيق (foreground) —
+  // كانت مستوردة سابقاً دون استدعاء فعلي؛ مرة واحدة فقط لكل جلسة تسجيل دخول.
+  if (!state.foregroundMessagesUnsub) {
+    try {
+      state.foregroundMessagesUnsub = listenForForegroundMessages({
+        onNotification: () => {
+          // حدّث شارات غير المقروء والمعاينة فور وصول أي رسالة أثناء الاستخدام
+          loadContacts();
+        },
+      });
+    } catch (err) {
+      console.error("تعذّر تفعيل استماع رسائل FCM الأمامية:", err);
+    }
+  }
 
   if (state.isOnline) {
     flushOutbox();
@@ -685,17 +705,32 @@ async function loadContactsFromNetwork() {
       .eq("is_admin", true)
       .neq("id", state.me.id);
 
-    const {
-      data: convs,
-    } = await supabase
+    // صلاحيات المشرف العام (Super Admin): يرى محادثات كل المشرفين، لا محادثاته
+    // فقط. يُضبط هذا الحقل من قاعدة البيانات حصرياً (profiles.is_super_admin)
+    // عبر sql/schema.sql — راجع القسم الخاص بذلك لتفعيله على حسابات إضافية.
+    let convsQuery = supabase
       .from("conversations")
       .select(
-        "*, user:profiles!conversations_user_id_fkey(*)"
+        state.me.is_super_admin
+          ? "*, user:profiles!conversations_user_id_fkey(*), owner_admin:profiles!conversations_admin_id_fkey(*)"
+          : "*, user:profiles!conversations_user_id_fkey(*)"
       )
-      .eq("admin_id", state.me.id)
       .order("last_message_at", {
         ascending: false,
       });
+
+    if (!state.me.is_super_admin) {
+      convsQuery = convsQuery.eq("admin_id", state.me.id);
+    }
+
+    const {
+      data: convs,
+      error: convsError,
+    } = await convsQuery;
+
+    if (convsError) {
+      console.error("تعذّر جلب المحادثات:", convsError);
+    }
 
     const userContacts = [];
 
@@ -715,6 +750,11 @@ async function loadContactsFromNetwork() {
         _conversationId: c.id,
         _unread: count || 0,
         _lastMessage: c.last_message,
+        // يُعرض فقط للمشرف العام كي يعرف أي مشرف يملك هذه المحادثة أصلاً
+        _ownerAdminName:
+          state.me.is_super_admin && c.owner_admin?.id !== state.me.id
+            ? c.owner_admin?.display_name
+            : null,
       });
     }
 
@@ -778,6 +818,11 @@ function buildContactRow(c, opts) {
     <div class="contact-info">
       <div class="contact-name">
         ${escapeHtml(c.display_name)}
+        ${
+          c._ownerAdminName
+            ? `<span class="owner-admin-badge">${escapeHtml(c._ownerAdminName)}</span>`
+            : ""
+        }
       </div>
 
       <div class="contact-sub">
@@ -2414,18 +2459,35 @@ async function sendMessage({
         finalAttachmentType,
     });
 
-  await supabase
-    .from("conversations")
-    .update({
-      last_message:
-        preview,
-      last_message_at:
-        new Date().toISOString(),
-    })
-    .eq(
-      "id",
-      conv.id
+  // معالجة استثناءات: الرسالة أُرسلت بنجاح بالفعل (أعلاه)، لذلك أي خطأ هنا
+  // (مثل انقطاع مؤقت 503 من Supabase) يجب ألا يمنع تنظيف الرد/مؤشر الكتابة —
+  // فقط نسجّل الخطأ دون مقاطعة تجربة المستخدم.
+  try {
+    const { error: convUpdateError } = await supabase
+      .from("conversations")
+      .update({
+        last_message:
+          preview,
+        last_message_at:
+          new Date().toISOString(),
+      })
+      .eq(
+        "id",
+        conv.id
+      );
+
+    if (convUpdateError) {
+      console.error(
+        "تعذّر تحديث معاينة آخر رسالة:",
+        convUpdateError
+      );
+    }
+  } catch (err) {
+    console.error(
+      "خطأ شبكة أثناء تحديث المحادثة:",
+      err
     );
+  }
 
   clearReply();
 
@@ -3197,23 +3259,34 @@ function subscribeToConversation(
 async function markConversationRead(
   conversationId
 ) {
-  await supabase
-    .from("messages")
-    .update({
-      status: "read",
-    })
-    .eq(
-      "conversation_id",
-      conversationId
-    )
-    .neq(
-      "sender_id",
-      state.me.id
-    )
-    .neq(
-      "status",
-      "read"
-    );
+  // معالجة استثناءات محلية: تُستدعى هذه الدالة أيضاً من داخل معالج Realtime
+  // (subscribeToConversation) الذي لا يوفّر أي try/catch خاص به، لذا يجب أن
+  // تكون آمنة ذاتياً حتى لا يتسبب خطأ شبكي عابر (503 مثلاً) في استثناء غير مُعالَج.
+  try {
+    const { error } = await supabase
+      .from("messages")
+      .update({
+        status: "read",
+      })
+      .eq(
+        "conversation_id",
+        conversationId
+      )
+      .neq(
+        "sender_id",
+        state.me.id
+      )
+      .neq(
+        "status",
+        "read"
+      );
+
+    if (error) {
+      console.error("markConversationRead failed:", error);
+    }
+  } catch (err) {
+    console.error("markConversationRead network error:", err);
+  }
 }
 
 // ===============================================================
@@ -3390,16 +3463,25 @@ async function refreshPresenceLabel(
     return;
   }
 
-  const {
-    data: profile,
-  } = await supabase
-    .from("profiles")
-    .select("last_seen")
-    .eq(
-      "id",
-      otherId
-    )
-    .single();
+  let profile = null;
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("last_seen")
+      .eq(
+        "id",
+        otherId
+      )
+      .single();
+
+    if (error) {
+      console.error("refreshPresenceLabel failed:", error);
+    } else {
+      profile = data;
+    }
+  } catch (err) {
+    console.error("refreshPresenceLabel network error:", err);
+  }
 
   if (profile?.last_seen) {
     const d =
