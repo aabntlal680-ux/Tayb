@@ -35,7 +35,7 @@ python3 -m http.server 8080
 
 ## 4. نشر التطبيق (Deploy)
 يعمل على أي استضافة استاتيكة: Vercel, Netlify, GitHub Pages, Cloudflare Pages.
-فقط ارفع محتوى مجلد `wa-app/` كما هو (تأكد أن `manifest.json` و `service-worker.js` في الجذر).
+فقط ارفع محتوى مجلد `wa-app/` كما هو (تأكد أن `manifest.json` و `sw.js` في الجذر).
 
 ## 5. ما تم تنفيذه في هذا الإصدار
 - تسجيل/دخول عبر البريد وكلمة المرور + حفظ الاسم في `profiles`
@@ -59,32 +59,48 @@ python3 -m http.server 8080
 - **PWA** قابل للتثبيت + Service Worker لتخزين الواجهة (App Shell)
 - **Web Push Notifications حقيقية** تصل حتى مع إغلاق المتصفح، عبر Edge Function + جدول `push_subscriptions` (تفاصيل الإعداد أدناه)
 
-## 6. إعداد الإشعارات الحقيقية (Web Push) — اختياري لكن موصى به
-هذه الميزة تحتاج خطوات خارج قاعدة البيانات لأن Supabase وحده لا يرسل Push:
+## 6. إعداد الإشعارات الحقيقية (Firebase Cloud Messaging) — تم التحويل من Web Push/VAPID
+⚠️ **تغيير معماري مهم:** المشروع لم يعد يستخدم Web Push (VAPID) + Supabase Edge Function
+(`supabase/functions/send-push` وجدول `push_subscriptions` أصبحا **قديمين/غير مُستخدَمين**،
+تُركا في المشروع للمرجعية فقط). الإشعارات الآن بالكامل عبر **Firebase Cloud Messaging (FCM)**.
 
-1. **ولّد مفاتيح VAPID** على جهازك:
-   ```bash
-   npx web-push generate-vapid-keys
-   ```
-   ستحصل على `publicKey` و `privateKey`.
+### آلية العمل الحالية
+- `js/push.js`: يهيّئ Firebase (SDK نسخة 10.8.0 المعيارية)، يطلب إذن الإشعارات، ويسجّل
+  `firebase-messaging-sw.js` في نطاق (scope) مخصص `./firebase-cloud-messaging-push-scope`
+  **منفصل تماماً** عن `sw.js` الرئيسي لتفادي أي تعارض بين Service Workerين.
+- `firebase-messaging-sw.js` (في جذر المشروع): يستقبل رسائل FCM في الخلفية (تطبيق مغلق/مصغّر)
+  عبر `messaging.onBackgroundMessage()` ويعرضها بـ `registration.showNotification()`.
+- عند فتح التطبيق (foreground)، `listenForForegroundMessages()` في `push.js` تُستدعى من
+  `enterApp()` في `app.js`، وتعرض الإشعار أيضاً عبر `registration.showNotification()` —
+  **وليس** `new Notification()` التي تُسبّب خطأ "Illegal constructor" على متصفحات الأندرويد.
+- توكن كل جهاز يُحفظ في جدول `fcm_tokens` (قسم 8 في `sql/schema.sql`).
 
-2. **الواجهة الأمامية**: ضع `publicKey` في `js/config.js` باسم `VAPID_PUBLIC_KEY`.
+### خطوات الإعداد
+1. **مشروع Firebase**: أنشئ مشروعاً على [console.firebase.google.com](https://console.firebase.google.com)،
+   فعّل **Cloud Messaging**، واحصل على `firebaseConfig` من Project Settings → General → Your apps → Web app.
+2. **مفتاح VAPID الخاص بـ Firebase** (مختلف عن VAPID القديم): Project Settings → Cloud Messaging →
+   Web Push certificates → Generate key pair.
+3. ضع نفس `firebaseConfig` **حرفياً بلا اختصار** في مكانين (يجب أن يتطابقا تماماً):
+   - `js/push.js` (المتغيّر `firebaseConfig`)
+   - `firebase-messaging-sw.js` (نفس المتغيّر) — هذا كان مصدر خطأ "ServiceWorker script
+     evaluation failed" سابقاً بسبب نسخة مبتورة (`"...":`) من `apiKey`/`appId`.
+4. ضع مفتاح VAPID في `js/push.js` بالمتغيّر `VAPID_KEY`.
+5. **نفّذ قسم 8 و 9 من `sql/schema.sql`** في SQL Editor (جدول `fcm_tokens` + صلاحيات).
+6. من داخل التطبيق: **الإعدادات ⚙️ → تفعيل إشعارات الجهاز**.
 
-3. **انشر Edge Function** (تتطلب Supabase CLI):
-   ```bash
-   supabase functions deploy send-push
-   supabase secrets set VAPID_PUBLIC_KEY="..." VAPID_PRIVATE_KEY="..." VAPID_SUBJECT="mailto:you@example.com"
-   supabase secrets set SUPABASE_URL="https://your-project-id.supabase.co" SUPABASE_SERVICE_ROLE_KEY="..."
-   ```
+> ملاحظة: iOS Safari لا يدعم FCM Web Push إلا عندما يكون التطبيق **مثبّتاً كـ PWA** على
+> الشاشة الرئيسية (iOS 16.4+)، تماماً كحال Web Push العادي.
 
-4. **فعّل الاستدعاء التلقائي**: في `sql/schema.sql` عدّل داخل دالة `notify_new_message()`
-   القيمتين `v_function_url` (رابط الدالة بعد نشرها) و `v_service_key` (مفتاح `service_role`)، ثم أعد تشغيل ذلك الجزء من السكربت في SQL Editor.
+## 7. صلاحيات المشرف العام (Super Admin)
+حساب `almgawell17@gmail.com` يملك الآن صلاحيات مطلقة على **كل** المحادثات و**كل** المشرفين
+(قراءة وكتابة/رد كامل)، وليس فقط محادثاته الخاصة — مُفعَّلة عبر عمود `profiles.is_super_admin`
+وسياسات RLS في قسم 9 من `sql/schema.sql`. تظهر محادثات المشرفين الآخرين في قائمته مع شارة
+صغيرة باسم المشرف الأصلي صاحب المحادثة.
 
-5. من داخل التطبيق: **الإعدادات ⚙️ → تفعيل إشعارات الجهاز**. سيطلب المتصفح إذن الإشعارات ويُسجّل الاشتراك تلقائياً.
+لإضافة حساب مشرف عام آخر لاحقاً: نفّذ فقط سطر `update public.profiles set is_super_admin =
+true, is_admin = true where email = '...';` من قسم 9 بالبريد الجديد — لا حاجة لتعديل أي كود.
 
-> ملاحظة: iOS Safari يدعم Web Push فقط عندما يكون التطبيق **مثبّتاً كـ PWA** على الشاشة الرئيسية (iOS 16.4+).
-
-## 7. المرحلة التالية (لم تُبنَ بعد — يمكن إضافتها عند الطلب)
+## 8. المرحلة التالية (لم تُبنَ بعد — يمكن إضافتها عند الطلب)
 - مزامنة صراعات التعديل (conflict resolution) عند تعديل نفس الرسالة من أكثر من جهاز أثناء العمل دون اتصال
 - بحث فعلي داخل قائمة المحادثات وداخل الرسائل (الحقل موجود شكلياً فقط حالياً)
 - ضغط وتصغير الصور قبل الرفع لتوفير الباندويدث
