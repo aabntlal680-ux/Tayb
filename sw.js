@@ -64,36 +64,34 @@ self.addEventListener("fetch", (event) => {
 });
 
 // ---------------------------------------------------------------
-// WEB PUSH: عرض إشعار عند وصول push من Edge Function send-push
+// NOTIFICATION CLICK
 // ---------------------------------------------------------------
-self.addEventListener("push", (event) => {
-  let data = { title: "رسالة جديدة", body: "" };
-  try {
-    data = event.data.json();
-  } catch (e) {
-    data.body = event.data ? event.data.text() : "";
-  }
-
-  const options = {
-    body: data.body,
-    icon: "./icons/icon1.png",
-    badge: "./icons/icon1.png",
-    dir: "auto",
-    data: { conversationId: data.conversationId },
-    vibrate: [100, 50, 100],
-  };
-
-  event.waitUntil(self.registration.showNotification(data.title, options));
-});
-
+// ملاحظة معمارية: أحداث push الفعلية أصبحت تُعالَج حصرياً في
+// firebase-messaging-sw.js (نطاق منفصل، مسجَّل من js/push.js) بعد التحول
+// إلى Firebase Cloud Messaging — لذلك أُزيل مستمع "push" القديم من هنا
+// لتفادي تعارض عاملين على نفس الحدث. لكن نُبقي "notificationclick" هنا لأن
+// أي إشعار يُعرض مباشرة من صفحة التطبيق نفسها عبر
+// (navigator.serviceWorker.ready).showNotification(...) — كما يحدث في
+// معالج الرسائل الواردة أثناء فتح التطبيق (foreground) داخل js/push.js —
+// يتبع تسجيل هذا العامل تحديداً (نطاق الجذر "./")، وليس firebase-messaging-sw.js.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+
+  const data = event.notification.data || {};
+  const conversationId = data.conversationId || "";
+  const targetUrl = conversationId ? "./index.html#chat" : "./index.html";
+
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ("focus" in client) return client.focus();
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ("focus" in client) {
+          if (conversationId) {
+            client.postMessage({ type: "OPEN_CONVERSATION", conversationId });
+          }
+          return client.focus();
+        }
       }
-      if (self.clients.openWindow) return self.clients.openWindow("./index.html");
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
     })
   );
 });
