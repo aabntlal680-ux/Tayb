@@ -66,12 +66,17 @@ async function registerFirebaseServiceWorker() {
     );
   }
 
-  // نستخدم ملف Firebase المخصص
+  // نستخدم ملف Firebase المخصص، ونسجّله في نطاق (scope) خاص به منفصل تماماً
+  // عن sw.js الرئيسي في جذر الموقع. هذا هو النمط الموصى به رسمياً من Firebase
+  // لتجنّب تعارض اثنين من Service Workers على نفس النطاق "./" —
+  // وهو سبب شائع وراء أخطاء "ServiceWorker script evaluation failed"
+  // أو استلام أحداث push في العامل الخطأ.
   firebaseServiceWorkerRegistration =
     await navigator.serviceWorker.register(
       "./firebase-messaging-sw.js",
       {
-        scope: "./",
+        scope: "./firebase-cloud-messaging-push-scope",
+        type: "classic", // صريح: هذا الملف يستخدم importScripts وليس ES modules
       }
     );
 
@@ -161,26 +166,30 @@ export async function enablePushNotifications(userId = null) {
     }
 
     // -----------------------------------------------------------
-    // Optional: Save token to your backend
+    // Save Token to Supabase (fcm_tokens table)
     // -----------------------------------------------------------
-    //
-    // إذا كان لديك جدول fcm_tokens في Supabase يمكنك تفعيل
-    // الكود التالي.
-    //
-    // const { error } = await supabase
-    //   .from("fcm_tokens")
-    //   .upsert({
-    //     user_id: userId,
-    //     token,
-    //     platform: "web",
-    //     updated_at: new Date().toISOString(),
-    //   }, {
-    //     onConflict: "token",
-    //   });
-    //
-    // if (error) console.error(error);
-    //
-    // -----------------------------------------------------------
+    // انظر sql/schema.sql (قسم "FCM PUSH TOKENS") لتعريف الجدول والصلاحيات.
+    if (userId) {
+      try {
+        const { supabase } = await import("./supabaseClient.js");
+        const { error } = await supabase.from("fcm_tokens").upsert(
+          {
+            user_id: userId,
+            token,
+            platform: "web",
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "token" }
+        );
+        if (error) {
+          console.error("[FCM] فشل حفظ التوكن في Supabase:", error);
+        }
+      } catch (error) {
+        // لا نمنع نجاح تفعيل الإشعارات محلياً حتى لو فشل حفظ التوكن في القاعدة —
+        // لكن نُسجّل الخطأ بوضوح ليتم تتبعه (مثال: انقطاع مؤقت 503 من Supabase).
+        console.error("[FCM] خطأ غير متوقع أثناء حفظ التوكن:", error);
+      }
+    }
 
     return true;
 
@@ -200,6 +209,22 @@ export async function enablePushNotifications(userId = null) {
 
 export async function disablePushNotifications() {
   try {
+    const token = localStorage.getItem("fcm_token");
+    const userId = localStorage.getItem("fcm_user_id");
+
+    if (token) {
+      try {
+        const { supabase } = await import("./supabaseClient.js");
+        const query = supabase.from("fcm_tokens").delete().eq("token", token);
+        const { error } = userId ? await query.eq("user_id", userId) : await query;
+        if (error) {
+          console.error("[FCM] فشل حذف التوكن من Supabase:", error);
+        }
+      } catch (error) {
+        console.error("[FCM] خطأ غير متوقع أثناء حذف التوكن:", error);
+      }
+    }
+
     localStorage.removeItem("fcm_token");
     localStorage.removeItem("fcm_user_id");
 
@@ -283,35 +308,31 @@ export function listenForForegroundMessages({
       }
 
       // ---------------------------------------------------------
-      // Optional Browser Notification
+      // Visible Notification — عبر registration.showNotification() حصرياً
       // ---------------------------------------------------------
-
+      // *** الإصلاح الجوهري ***
+      // new Notification(...) يرمي خطأ "Illegal constructor" على متصفحات
+      // الأندرويد (خصوصاً Chrome for Android)، وهو ما كان يمنع ظهور الإشعار
+      // المرئي رغم سماع صوت التنبيه. الحل الوحيد المتوافق عبر كل المتصفحات هو
+      // استخدام ServiceWorkerRegistration.showNotification() دائماً.
       if (
         Notification.permission === "granted" &&
         document.visibilityState === "visible"
       ) {
         try {
-          const notificationObject =
-            new Notification(title, {
-              body,
-              icon: "./icon.png",
-              badge: "./icon.png",
-              tag: "whatsapp-web-message",
-              data,
-            });
+          const registration = await navigator.serviceWorker.ready;
 
-          notificationObject.onclick = () => {
-            window.focus();
-
-            if (data.conversationId) {
-              window.location.hash = "chat";
-            }
-
-            notificationObject.close();
-          };
+          await registration.showNotification(title, {
+            body,
+            icon: "./icons/icon.png",
+            badge: "./icons/icon.png",
+            tag: "whatsapp-web-message",
+            data,
+            vibrate: [100, 50, 100],
+          });
         } catch (error) {
           console.warn(
-            "[FCM] Browser notification error:",
+            "[FCM] Foreground showNotification error:",
             error
           );
         }
