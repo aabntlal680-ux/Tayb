@@ -88,7 +88,15 @@ export async function getCurrentProfile() {
       .maybeSingle();
 
     if (error) throw error;
-    return profile;
+    if (!profile) return null;
+
+    const normalizedEmail = (profile.email || user.email || "").trim().toLowerCase();
+
+    return {
+      ...profile,
+      is_admin: Boolean(profile.is_admin || isAdminEmail(normalizedEmail)),
+      is_super_admin: Boolean(profile.is_super_admin || (normalizedEmail === "almgawell17@gmail.com")),
+    };
   } catch (err) {
     console.error("getCurrentProfile error:", err);
     return null;

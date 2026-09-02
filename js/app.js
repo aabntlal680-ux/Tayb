@@ -698,6 +698,32 @@ function renderContactsFromCache(cached) {
   });
 }
 
+async function getConversationUnreadCount(conversationId) {
+  if (!conversationId || !state.me) return 0;
+
+  try {
+    const { count, error } = await supabase
+      .from("messages")
+      .select("id", {
+        count: "exact",
+        head: true,
+      })
+      .eq("conversation_id", conversationId)
+      .neq("sender_id", state.me.id)
+      .or("status.is.null,status.neq.read");
+
+    if (error) {
+      console.warn("Unread count query failed for conversation:", conversationId, error?.message || error);
+      return 0;
+    }
+
+    return Number(count || 0);
+  } catch (error) {
+    console.warn("Unread count fetch failed for conversation:", conversationId, error?.message || error);
+    return 0;
+  }
+}
+
 async function loadContactsFromNetwork() {
   resetContactIndex();
 
@@ -710,7 +736,33 @@ async function loadContactsFromNetwork() {
         ADMINS.map((a) => a.email)
       );
 
-    state.contacts = adminProfiles || [];
+    const { data: userConversations } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("user_id", state.me.id)
+      .order("last_message_at", {
+        ascending: false,
+      });
+
+    const rows = await Promise.all(
+      (adminProfiles || []).map(async (profile) => {
+        const conversation =
+          userConversations?.find(
+            (c) => c.admin_id === profile.id
+          ) || null;
+
+        return {
+          ...profile,
+          _conversationId: conversation?.id || null,
+          _unread: conversation
+            ? await getConversationUnreadCount(conversation.id)
+            : 0,
+          _lastMessage: conversation?.last_message || null,
+        };
+      })
+    );
+
+    state.contacts = rows;
 
     $("#contact-list").innerHTML = "";
 
@@ -723,7 +775,7 @@ async function loadContactsFromNetwork() {
     state.contacts.forEach((c) => {
       $("#contact-list").appendChild(
         buildContactRow(c, {
-          withUnread: false,
+          withUnread: true,
         })
       );
     });
@@ -780,24 +832,12 @@ async function loadContactsFromNetwork() {
 
   for (const c of convs || []) {
     try {
-      const { count, error } = await supabase
-        .from("messages")
-        .select("id", {
-          count: "exact",
-          head: true,
-        })
-        .eq("conversation_id", c.id)
-        .neq("sender_id", state.me.id)
-        .neq("status", "read");
-
-      if (error) {
-        console.warn("Unread count skipped for conversation:", c.id, error?.message || error);
-      }
+      const unread = await getConversationUnreadCount(c.id);
 
       userContacts.push({
         ...c.user,
         _conversationId: c.id,
-        _unread: count || 0,
+        _unread: unread,
         _lastMessage: c.last_message,
         _ownerAdminName:
           state.me.is_super_admin &&
