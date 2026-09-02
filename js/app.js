@@ -1225,20 +1225,17 @@ async function openConversation(otherProfile) {
 
     clearReply();
 
+    const userId = state.me.is_admin
+      ? otherProfile.id
+      : state.me.id;
+    const adminId = state.me.is_admin
+      ? state.me.id
+      : otherProfile.id;
+
     let conversationId =
       otherProfile._conversationId;
 
     if (!conversationId) {
-      const userId =
-        state.me.is_admin
-          ? otherProfile.id
-          : state.me.id;
-
-      const adminId =
-        state.me.is_admin
-          ? state.me.id
-          : otherProfile.id;
-
       const {
         data: existing,
         error: selectErr,
@@ -1280,6 +1277,8 @@ async function openConversation(otherProfile) {
 
     state.activeConversation = {
       id: conversationId,
+      userId,
+      adminId,
       otherProfile,
     };
 
@@ -1480,18 +1479,29 @@ function isMessageMine(message) {
   return String(message.sender_id) === String(state.me.id);
 }
 
+function isMessageFromUser(message) {
+  const userId = state.activeConversation?.userId;
+
+  return Boolean(
+    userId &&
+    message?.sender_id &&
+    String(message.sender_id) === String(userId)
+  );
+}
+
 // ===============================================================
 // MESSAGE BUBBLE
 // ===============================================================
 
 function buildMessageBubble(m) {
   const mine = isMessageMine(m);
+  const userSide = isMessageFromUser(m);
 
   const div =
     document.createElement("div");
 
   div.className =
-    `bubble-row ${
+    `bubble-row ${userSide ? "user-side" : "admin-side"} ${
       mine ? "mine" : "theirs"
     }`;
 

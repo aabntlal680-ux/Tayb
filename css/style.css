@@ -1357,11 +1357,11 @@ body[data-theme="light"] .chat-header {
   margin: 4px 0;
 }
 
-.bubble-row.mine {
+.bubble-row.admin-side {
   justify-content: flex-end;
 }
 
-.bubble-row.theirs {
+.bubble-row.user-side {
   justify-content: flex-start;
 }
 
@@ -1388,11 +1388,11 @@ body[data-theme="light"] .chat-header {
     transform 0.15s;
 }
 
-.bubble-row.mine::before {
+.bubble-row.admin-side::before {
   inset-inline-end: -28px;
 }
 
-.bubble-row.theirs::before {
+.bubble-row.user-side::before {
   inset-inline-start: -28px;
 }
 
@@ -1449,7 +1449,7 @@ body[data-theme="light"] .bubble {
     #111b21;
 }
 
-.bubble-row.mine .bubble {
+.bubble-row.admin-side .bubble {
   background:
     var(--wa-bubble-mine-dark);
 
@@ -1458,7 +1458,7 @@ body[data-theme="light"] .bubble {
 }
 
 body[data-theme="light"]
-.bubble-row.mine
+.bubble-row.admin-side
 .bubble {
   background:
     var(--wa-bubble-mine-light);
