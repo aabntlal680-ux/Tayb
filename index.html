@@ -1,16 +1,25 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>محادثات</title>
-<link rel="manifest" href="./manifest.json">
-<link rel="icon" type="image/x-icon" href="./icons/icon.png">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>محادثات</title>
 
-<meta name="theme-color" content="#111b21" />
-<link rel="stylesheet" href="./css/style.css" />
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Open Graph / معاينة المشاركة -->
+  <meta property="og:title" content="محادثات" />
+  <meta property="og:description" content="تطبيق محادثات ودردشة فورية" />
+  <!-- الرابط الكامل للصورة داخل مجلد icons -->
+  <meta property="og:image" content="https://whatsapp-web-app-gules.vercel.app/icons/icon.png" />
+  <meta property="og:url" content="https://whatsapp-web-app-gules.vercel.app/" />
+  <meta property="og:type" content="website" />
+
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/x-icon" href="./icons/icon.png">
+  <meta name="theme-color" content="#111b21" />
+  <link rel="stylesheet" href="./css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
+
 <body data-theme="dark">
 
 <!-- شاشة تحميل أولية: تمنع ظهور شاشة الدخول للحظة قبل التحقق من الجلسة المخزنة -->
