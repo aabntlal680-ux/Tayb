@@ -2,6 +2,14 @@
 importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js');
 
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 // 2. إعدادات فايربيس
 const firebaseConfig = {
   apiKey: "AIzaSyDeg6RBNC9bWw1QYxBkYtCuMMFPBzxpw4o",
@@ -20,19 +28,21 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   console.log("[firebase-messaging-sw.js] Background message:", payload);
 
-  const notification = payload.notification || {};
-  const data = payload.data || {};
+  const notification = payload?.notification || {};
+  const data = payload?.data || {};
 
   const title = notification.title || data.title || "رسالة جديدة";
   const body = notification.body || data.body || "لديك رسالة جديدة";
+  const conversationId = data.conversationId || data.conversation_id || "";
 
   const notificationOptions = {
     body,
     icon: data.icon || "./icons/icon.png",
     badge: data.badge || "./icons/icon.png",
-    tag: data.conversationId || "whatsapp-message",
+    tag: conversationId || "whatsapp-message",
     renotify: true,
-    data: { ...data },
+    requireInteraction: true,
+    data: { ...data, conversationId },
     vibrate: [100, 50, 100],
   };
 
@@ -45,8 +55,8 @@ messaging.onBackgroundMessage((payload) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  const data = event.notification.data || {};
-  const conversationId = data.conversationId || "";
+  const data = event.notification?.data || {};
+  const conversationId = data.conversationId || data.conversation_id || "";
   const targetUrl = conversationId ? "./index.html#chat" : "./index.html";
 
   event.waitUntil(
@@ -70,4 +80,8 @@ self.addEventListener("notificationclick", (event) => {
         return null;
       })
   );
+});
+
+self.addEventListener("notificationclose", () => {
+  // لا حاجة إلى إجراء خاص، لكن يضمن أن الإشعار لا يبقى معلقاً في الذاكرة.
 });

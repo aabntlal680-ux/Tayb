@@ -32,6 +32,9 @@ const firebaseConfig = {
 const VAPID_KEY =
   "BAxTu3HSXPEgeTyTRPoXvpkLQWu8llJQfsPEoUr0MDjHKRJ0VSzPFcJw5RFv-s6BTnZYeWEHW8NSQzAjfOxoJfo";
 
+const FIREBASE_SW_PATH = "/firebase-messaging-sw.js";
+const FIREBASE_SW_SCOPE = "/firebase-cloud-messaging-push-scope/";
+
 // ---------------------------------------------------------------
 // Firebase Initialization
 // ---------------------------------------------------------------
@@ -66,19 +69,19 @@ async function registerFirebaseServiceWorker() {
     );
   }
 
-  // نستخدم ملف Firebase المخصص، ونسجّله في نطاق (scope) خاص به منفصل تماماً
-  // عن sw.js الرئيسي في جذر الموقع. هذا هو النمط الموصى به رسمياً من Firebase
-  // لتجنّب تعارض اثنين من Service Workers على نفس النطاق "./" —
-  // وهو سبب شائع وراء أخطاء "ServiceWorker script evaluation failed"
-  // أو استلام أحداث push في العامل الخطأ.
-  firebaseServiceWorkerRegistration =
-    await navigator.serviceWorker.register(
-      "./firebase-messaging-sw.js",
-      {
-        scope: "./firebase-cloud-messaging-push-scope",
-        type: "classic", // صريح: هذا الملف يستخدم importScripts وليس ES modules
-      }
-    );
+  // نثبت worker الخاص بـ Firebase في نطاق مخصص ومباشر لتفادي تعارضه مع sw.js
+  // الرئيسي في root. هذا أمر حاسم لأن المتصفح يسمح فقط بعمل worker واحد لكل scope.
+  const registration =
+    (await navigator.serviceWorker.getRegistrations()).find(
+      (candidate) => candidate.scope === new URL(FIREBASE_SW_SCOPE, window.location.origin).href
+    ) ||
+    (await navigator.serviceWorker.register(FIREBASE_SW_PATH, {
+      scope: FIREBASE_SW_SCOPE,
+      type: "classic",
+      updateViaCache: "none",
+    }));
+
+  firebaseServiceWorkerRegistration = registration;
 
   await navigator.serviceWorker.ready;
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = "wa-clone-shell-v3";
+const CACHE_NAME = "wa-clone-shell-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -12,6 +12,8 @@ const APP_SHELL = [
   "./js/db.js",
   "./js/push.js",
   "./manifest.json",
+  "./icons/icon.png",
+  "./icons/notify.mp3",
 ];
 
 self.addEventListener("install", (event) => {
@@ -30,35 +32,57 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Network-first for Supabase API/Realtime calls, cache-first for the app shell
+// Network-first for navigations and API calls, cache-first for static assets.
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
-  const isSupabase = url.hostname.endsWith(".supabase.co");
+  const request = event.request;
 
-  if (isSupabase) {
-    event.respondWith(fetch(event.request).catch(() => new Response(null, { status: 503 })));
+  if (request.method !== "GET") {
+    return;
+  }
+
+  const url = new URL(request.url);
+  const isSupabase = url.hostname.endsWith(".supabase.co");
+  const isSameOrigin = url.origin === self.location.origin;
+  const isStaticAsset = /\.(css|js|png|jpg|jpeg|gif|svg|webp|mp3|json|html|ico|woff2?)$/i.test(url.pathname);
+
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match("./index.html"))
+    );
+    return;
+  }
+
+  if (isSupabase || !isSameOrigin) {
+    event.respondWith(fetch(request).catch(() => new Response(null, { status: 503 })));
+    return;
+  }
+
+  if (isStaticAsset) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+
+        return fetch(request).then((response) => {
+          if (response && response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        }).catch(() => cached);
+      })
+    );
     return;
   }
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-
-      return fetch(event.request)
-        .then((response) => {
-        // التأكد من أن الاستجابة صالحة والطلب من نوع GET قبل التخزين
-          if (!response || response.status !== 200 || response.type !== 'basic' || event.request.method !== 'GET') {
-            return response;
-          }
-
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-
-          return response;
-        })
-        .catch(() => cached);
-    })
+    fetch(request).catch(() => caches.match(request).then((cached) => cached || new Response(null, { status: 503 })))
   );
 });

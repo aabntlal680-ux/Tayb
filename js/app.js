@@ -1390,13 +1390,20 @@ function messagePreviewText(m) {
   return "";
 }
 
+function isMessageMine(message) {
+  if (!message || !state.me?.id) {
+    return false;
+  }
+
+  return String(message.sender_id) === String(state.me.id);
+}
+
 // ===============================================================
 // MESSAGE BUBBLE
 // ===============================================================
 
 function buildMessageBubble(m) {
-  const mine =
-    m.sender_id === state.me.id;
+  const mine = isMessageMine(m);
 
   const div =
     document.createElement("div");
