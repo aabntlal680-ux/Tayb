@@ -62,36 +62,3 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
-
-// ---------------------------------------------------------------
-// NOTIFICATION CLICK
-// ---------------------------------------------------------------
-// ملاحظة معمارية: أحداث push الفعلية أصبحت تُعالَج حصرياً في
-// firebase-messaging-sw.js (نطاق منفصل، مسجَّل من js/push.js) بعد التحول
-// إلى Firebase Cloud Messaging — لذلك أُزيل مستمع "push" القديم من هنا
-// لتفادي تعارض عاملين على نفس الحدث. لكن نُبقي "notificationclick" هنا لأن
-// أي إشعار يُعرض مباشرة من صفحة التطبيق نفسها عبر
-// (navigator.serviceWorker.ready).showNotification(...) — كما يحدث في
-// معالج الرسائل الواردة أثناء فتح التطبيق (foreground) داخل js/push.js —
-// يتبع تسجيل هذا العامل تحديداً (نطاق الجذر "./")، وليس firebase-messaging-sw.js.
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-
-  const data = event.notification.data || {};
-  const conversationId = data.conversationId || "";
-  const targetUrl = conversationId ? "./index.html#chat" : "./index.html";
-
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if ("focus" in client) {
-          if (conversationId) {
-            client.postMessage({ type: "OPEN_CONVERSATION", conversationId });
-          }
-          return client.focus();
-        }
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
-    })
-  );
-});
