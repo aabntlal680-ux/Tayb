@@ -112,6 +112,11 @@ create policy if not exists "Users can delete own fcm token"
   using (auth.uid() = user_id);
 
 -- 8) RLS Policies for typing_status
+drop policy if exists "Users can read typing status in conversation they belong to" on public.typing_status;
+drop policy if exists "Users can upsert their own typing status" on public.typing_status;
+drop policy if exists "Users can update their own typing status" on public.typing_status;
+drop policy if exists "Users can delete their own typing status" on public.typing_status;
+
 create policy if not exists "Users can read typing status in conversation they belong to"
   on public.typing_status
   for select
@@ -128,13 +133,34 @@ create policy if not exists "Users can read typing status in conversation they b
 create policy if not exists "Users can upsert their own typing status"
   on public.typing_status
   for insert
-  with check (auth.uid() = user_id);
+  with check (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.conversations c
+      where c.id = typing_status.conversation_id
+        and (c.user_id = auth.uid() or c.admin_id = auth.uid())
+    )
+  );
 
 create policy if not exists "Users can update their own typing status"
   on public.typing_status
   for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  using (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.conversations c
+      where c.id = typing_status.conversation_id
+        and (c.user_id = auth.uid() or c.admin_id = auth.uid())
+    )
+  )
+  with check (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.conversations c
+      where c.id = typing_status.conversation_id
+        and (c.user_id = auth.uid() or c.admin_id = auth.uid())
+    )
+  );
 
 create policy if not exists "Users can delete their own typing status"
   on public.typing_status

@@ -3309,6 +3309,8 @@ async function markConversationRead(
 // ===============================================================
 
 function handleTypingInput() {
+  if (!state.isOnline || !state.activeConversation?.id) return;
+
   setTyping(true);
 
   clearTimeout(
@@ -3326,7 +3328,7 @@ async function setTyping(isTyping) {
   const conv =
     state.activeConversation;
 
-  if (!conv || !state.me) return;
+  if (!conv?.id || !state.me || !state.isOnline) return;
 
   try {
     const { error } = await supabase
