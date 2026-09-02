@@ -77,7 +77,7 @@ async function registerFirebaseServiceWorker() {
     ) ||
     (await navigator.serviceWorker.register(FIREBASE_SW_PATH, {
       scope: FIREBASE_SW_SCOPE,
-      type: "classic",
+      type: "module",
       updateViaCache: "none",
     }));
 
@@ -94,6 +94,12 @@ async function registerFirebaseServiceWorker() {
 
 export async function enablePushNotifications(userId = null) {
   try {
+    const existingToken = localStorage.getItem("fcm_token");
+    if (existingToken && userId) {
+      localStorage.setItem("fcm_user_id", String(userId));
+      return true;
+    }
+
     if (!messaging) {
       throw new Error("Firebase Messaging غير مهيأ.");
     }

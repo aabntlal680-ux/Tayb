@@ -779,27 +779,46 @@ async function loadContactsFromNetwork() {
   const userContacts = [];
 
   for (const c of convs || []) {
-    const { count } = await supabase
-      .from("messages")
-      .select("id", {
-        count: "exact",
-        head: true,
-      })
-      .eq("conversation_id", c.id)
-      .neq("sender_id", state.me.id)
-      .neq("status", "read");
+    try {
+      const { count, error } = await supabase
+        .from("messages")
+        .select("id", {
+          count: "exact",
+          head: true,
+        })
+        .eq("conversation_id", c.id)
+        .neq("sender_id", state.me.id)
+        .neq("status", "read");
 
-    userContacts.push({
-      ...c.user,
-      _conversationId: c.id,
-      _unread: count || 0,
-      _lastMessage: c.last_message,
-      _ownerAdminName:
-        state.me.is_super_admin &&
-        c.owner_admin?.id !== state.me.id
-          ? c.owner_admin?.display_name
-          : null,
-    });
+      if (error) {
+        console.warn("Unread count skipped for conversation:", c.id, error?.message || error);
+      }
+
+      userContacts.push({
+        ...c.user,
+        _conversationId: c.id,
+        _unread: count || 0,
+        _lastMessage: c.last_message,
+        _ownerAdminName:
+          state.me.is_super_admin &&
+          c.owner_admin?.id !== state.me.id
+            ? c.owner_admin?.display_name
+            : null,
+      });
+    } catch (error) {
+      console.warn("Unread count failed for conversation:", c.id, error?.message || error);
+      userContacts.push({
+        ...c.user,
+        _conversationId: c.id,
+        _unread: 0,
+        _lastMessage: c.last_message,
+        _ownerAdminName:
+          state.me.is_super_admin &&
+          c.owner_admin?.id !== state.me.id
+            ? c.owner_admin?.display_name
+            : null,
+      });
+    }
   }
 
   $("#admins-section").innerHTML = "";
@@ -3223,7 +3242,7 @@ async function setTyping(isTyping) {
   if (!conv || !state.me) return;
 
   try {
-    await supabase
+    const { error } = await supabase
       .from("typing_status")
       .upsert(
         {
@@ -3241,10 +3260,17 @@ async function setTyping(isTyping) {
             "conversation_id,user_id",
         }
       );
+
+    if (error) {
+      console.warn(
+        "Typing status skipped due to Supabase permissions/network:",
+        error?.message || error
+      );
+    }
   } catch (err) {
-    console.error(
-      "setTyping failed:",
-      err
+    console.warn(
+      "setTyping failed (non-fatal):",
+      err?.message || err
     );
   }
 }

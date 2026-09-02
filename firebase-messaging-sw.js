@@ -1,16 +1,14 @@
-// 1. الاستيراد المباشر في أعلى الملف بدون try...catch
-importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js');
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getMessaging, onBackgroundMessage } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-sw.js";
 
-self.addEventListener('install', (event) => {
+self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// 2. إعدادات فايربيس
 const firebaseConfig = {
   apiKey: "AIzaSyDeg6RBNC9bWw1QYxBkYtCuMMFPBzxpw4o",
   authDomain: "studio-6422025604-b97aa.firebaseapp.com",
@@ -20,20 +18,18 @@ const firebaseConfig = {
   appId: "1:599267399266:web:329e49e24298af60f5e33b",
 };
 
-// 3. التهيئة المباشرة
-firebase.initializeApp(firebaseConfig);
-const messaging = firebase.messaging();
+const app = initializeApp(firebaseConfig);
+const messaging = getMessaging(app);
 
-// 4. دالة استقبال رسائل الخلفية
-messaging.onBackgroundMessage((payload) => {
+onBackgroundMessage(messaging, (payload) => {
   console.log("[firebase-messaging-sw.js] Background message:", payload);
 
   const notification = payload?.notification || {};
   const data = payload?.data || {};
+  const conversationId = data.conversationId || data.conversation_id || "";
 
   const title = notification.title || data.title || "رسالة جديدة";
   const body = notification.body || data.body || "لديك رسالة جديدة";
-  const conversationId = data.conversationId || data.conversation_id || "";
 
   const notificationOptions = {
     body,
@@ -49,9 +45,6 @@ messaging.onBackgroundMessage((payload) => {
   return self.registration.showNotification(title, notificationOptions);
 });
 
-// ---------------------------------------------------------------
-// Notification Click
-// ---------------------------------------------------------------
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
@@ -83,5 +76,5 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 self.addEventListener("notificationclose", () => {
-  // لا حاجة إلى إجراء خاص، لكن يضمن أن الإشعار لا يبقى معلقاً في الذاكرة.
+  // no-op
 });
