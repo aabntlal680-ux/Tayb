@@ -77,7 +77,6 @@ async function registerFirebaseServiceWorker() {
     ) ||
     (await navigator.serviceWorker.register(FIREBASE_SW_PATH, {
       scope: FIREBASE_SW_SCOPE,
-      type: "module",
       updateViaCache: "none",
     }));
 

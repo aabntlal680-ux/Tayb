@@ -1,5 +1,7 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getMessaging, onBackgroundMessage } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-sw.js";
+importScripts(
+  "https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js",
+  "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"
+);
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -18,10 +20,10 @@ const firebaseConfig = {
   appId: "1:599267399266:web:329e49e24298af60f5e33b",
 };
 
-const app = initializeApp(firebaseConfig);
-const messaging = getMessaging(app);
+firebase.initializeApp(firebaseConfig);
+const messaging = firebase.messaging();
 
-onBackgroundMessage(messaging, (payload) => {
+messaging.onBackgroundMessage((payload) => {
   console.log("[firebase-messaging-sw.js] Background message:", payload);
 
   const notification = payload?.notification || {};
