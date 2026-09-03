@@ -30,7 +30,7 @@ const firebaseConfig = {
 // ---------------------------------------------------------------
 
 const VAPID_KEY =
-  "BAxTu3HSXPEgeTyTRPoXvpkLQWu8llJQfsPEoUr0MDjHKRJ0VSzPFcJw5RFv-s6BTnZYeWEHW8NSQzAjfOxoJfo";
+  "BGKcsJH4YH7vV384UCmx_FKD0xGiWTNuMA7skLLUWzIodKXTSFLRleq1K0ttPMnXZfzQO42bQig8nSKTSIw1jts";
 
 const FIREBASE_SW_PATH = "/firebase-messaging-sw.js";
 const FIREBASE_SW_SCOPE = "/firebase-cloud-messaging-push-scope/";
