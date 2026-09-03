@@ -40,6 +40,7 @@ messaging.onBackgroundMessage((payload) => {
     tag: conversationId || "whatsapp-message",
     renotify: true,
     requireInteraction: true,
+    silent: false,
     data: { ...data, conversationId },
     vibrate: [100, 50, 100],
   };
@@ -52,7 +53,9 @@ self.addEventListener("notificationclick", (event) => {
 
   const data = event.notification?.data || {};
   const conversationId = data.conversationId || data.conversation_id || "";
-  const targetUrl = conversationId ? "./index.html#chat" : "./index.html";
+  const targetUrl = conversationId
+    ? `./index.html?conversation=${encodeURIComponent(conversationId)}`
+    : "./index.html";
 
   event.waitUntil(
     clients

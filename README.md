@@ -57,12 +57,10 @@ python3 -m http.server 8080
 - **وضع عدم الاتصال (Offline)**: تخزين المحادثات والرسائل في IndexedDB، عرضها فوراً عند فتح التطبيق حتى دون إنترنت، وشريط تنبيه علوي عند انقطاع الاتصال
 - **قائمة انتظار الإرسال (Outbox)**: أي رسالة تُكتب أثناء انقطاع الاتصال تُخزَّن محلياً وتُرسل تلقائياً بمجرد عودة الشبكة (`online` event)
 - **PWA** قابل للتثبيت + Service Worker لتخزين الواجهة (App Shell)
-- **Web Push Notifications حقيقية** تصل حتى مع إغلاق المتصفح، عبر Edge Function + جدول `push_subscriptions` (تفاصيل الإعداد أدناه)
+- **إشعارات FCM حقيقية** تصل عند عمل التطبيق في الخلفية، مع تخزين توكنات الأجهزة في `fcm_tokens` وإرسال الرسالة عبر Edge Function آمنة
 
 ## 6. إعداد الإشعارات الحقيقية (Firebase Cloud Messaging) — تم التحويل من Web Push/VAPID
-⚠️ **تغيير معماري مهم:** المشروع لم يعد يستخدم Web Push (VAPID) + Supabase Edge Function
-(`supabase/functions/send-push` وجدول `push_subscriptions` أصبحا **قديمين/غير مُستخدَمين**،
-تُركا في المشروع للمرجعية فقط). الإشعارات الآن بالكامل عبر **Firebase Cloud Messaging (FCM)**.
+⚠️ **المسار الحالي:** الإشعارات تعمل عبر **Firebase Cloud Messaging (FCM)**. بعد نجاح حفظ الرسالة، يستدعي التطبيق `supabase/functions/send-push`، وتستخرج الوظيفة الطرف الآخر من `conversation_id` ثم ترسل رسالة data-only إلى توكنات FCM. هذا يمنع ازدواجية إشعار FCM في الخلفية ويجعل Worker هو المسؤول عن العرض.
 
 ### آلية العمل الحالية
 - `js/push.js`: يهيّئ Firebase (SDK نسخة 10.8.0 المعيارية)، يطلب إذن الإشعارات، ويسجّل
@@ -73,7 +71,9 @@ python3 -m http.server 8080
 - عند فتح التطبيق (foreground)، `listenForForegroundMessages()` في `push.js` تُستدعى من
   `enterApp()` في `app.js`، وتعرض الإشعار أيضاً عبر `registration.showNotification()` —
   **وليس** `new Notification()` التي تُسبّب خطأ "Illegal constructor" على متصفحات الأندرويد.
-- توكن كل جهاز يُحفظ في جدول `fcm_tokens` (قسم 8 في `sql/schema.sql`).
+- توكن كل جهاز يُحفظ في جدول `fcm_tokens`. يجب نشر وظيفة `send-push` وضبط أسرار Firebase كما هو موضح في `PUSH_DEPLOYMENT.md`.
+- وظيفة `admin-delete-user` مخصصة لحذف المستخدم العادي مع بياناته بعد التحقق الخادمي من صلاحية المشرف.
+- صوت foreground يستخدم `icons/notify.mp3`؛ أما صوت إشعار الخلفية فيحدده نظام الهاتف وإعدادات قناة الإشعارات.
 
 ### خطوات الإعداد
 1. **مشروع Firebase**: أنشئ مشروعاً على [console.firebase.google.com](https://console.firebase.google.com)،

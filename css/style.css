@@ -3032,3 +3032,56 @@ select:focus-visible {
       auto !important;
   }
 }
+
+
+/* Controls added for mobile-safe settings and administration. */
+.settings-danger {
+  width: 100%;
+  border: 1px solid rgba(220, 80, 80, .35);
+  color: #ffb4b4;
+  background: rgba(180, 45, 45, .12);
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+.settings-danger:hover { background: rgba(180, 45, 45, .24); }
+.contact-row { position: relative; }
+.contact-delete-btn {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--wa-text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+}
+.contact-delete-btn:hover { color: #ff8d8d; background: rgba(255, 80, 80, .12); }
+.bubble-action-delete { color: #ff8d8d; }
+.bubble { width: fit-content; max-width: min(68%, 720px); min-width: 0; }
+.bubble:has(.msg-attachment),
+.bubble:has(.msg-file),
+.bubble:has(.msg-audio) {
+  width: fit-content;
+  max-width: min(86%, 720px);
+}
+.msg-attachment {
+  display: block;
+  width: auto;
+  max-width: min(280px, 100%);
+  height: auto;
+  object-fit: contain;
+}
+.msg-audio { display: block; width: min(280px, 100%); max-width: 100%; }
+@media (hover: none) and (pointer: coarse) {
+  .bubble-actions { opacity: 1; pointer-events: auto; }
+}
+@media (max-width: 768px) {
+  .settings-panel { inset-inline: 8px; width: auto; max-width: none; }
+  .bubble { max-width: 86%; }
+  .bubble:has(.msg-attachment),
+  .bubble:has(.msg-file),
+  .bubble:has(.msg-audio) { max-width: 92%; }
+  .msg-attachment { max-width: min(72vw, 280px); }
+  .msg-audio { width: min(72vw, 280px); }
+}

@@ -262,3 +262,16 @@ create policy if not exists "Users can insert reactions to their own messages or
 -- ================================================================
 -- End of SQL
 -- ================================================================
+
+
+-- 13) Admin-only destructive operations.
+create policy if not exists "Admins can delete messages"
+  on public.messages for delete
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin = true));
+
+create policy if not exists "Admins can delete ordinary-user conversations"
+  on public.conversations for delete
+  using (
+    exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin = true)
+    and exists (select 1 from public.profiles u where u.id = conversations.user_id and coalesce(u.is_admin, false) = false)
+  );

@@ -4,6 +4,7 @@ import { ADMINS } from "./config.js";
 import { applyLanguage } from "./i18n.js";
 import {
   cacheMessages,
+  deleteCachedMessage,
   getCachedMessages,
   cacheContacts,
   getCachedContacts,
@@ -132,6 +133,12 @@ async function boot() {
   });
 
   updateOfflineBanner();
+
+  navigator.serviceWorker?.addEventListener("message", async (event) => {
+    if (event.data?.type === "OPEN_CONVERSATION" && state.me) {
+      await openConversationById(event.data.conversationId);
+    }
+  });
 
   window.addEventListener("popstate", (event) => {
     if (!event.state || !event.state.waChat) {
@@ -284,6 +291,8 @@ async function enterApp() {
   if (state.isOnline) {
     flushOutbox();
   }
+
+  await openConversationFromNotificationRoute();
 }
 
 // ===============================================================
@@ -516,6 +525,18 @@ function wireChrome() {
     "change",
     handleAvatarUpload
   );
+
+  $("#btn-remove-avatar")?.addEventListener("click", removeAvatar);
+  $("#btn-remove-wallpaper")?.addEventListener("click", removeWallpaper);
+
+  document.addEventListener("click", (event) => {
+    const panel = $("#settings-panel");
+    const trigger = $("#btn-settings");
+    if (panel && !panel.classList.contains("hidden") &&
+        !panel.contains(event.target) && event.target !== trigger) {
+      panel.classList.add("hidden");
+    }
+  });
 
   $("#wallpaper-input")?.addEventListener(
     "change",
@@ -963,6 +984,19 @@ function buildContactRow(c, opts = {}) {
     openConversation(c);
   });
 
+  if (state.me?.is_admin && !c.is_admin && c.id) {
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "contact-delete-btn";
+    deleteButton.title = "حذف المستخدم";
+    deleteButton.textContent = "🗑️";
+    deleteButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await deleteUser(c);
+    });
+    row.appendChild(deleteButton);
+  }
+
   if (c._conversationId) {
     indexContactElement(
       c._conversationId,
@@ -1199,6 +1233,26 @@ function escapeHtml(str) {
   d.textContent = str || "";
 
   return d.innerHTML;
+}
+
+async function openConversationFromNotificationRoute() {
+  const conversationId = new URLSearchParams(location.search).get("conversation");
+  if (conversationId) await openConversationById(conversationId);
+}
+
+async function openConversationById(conversationId) {
+  if (!conversationId || !state.me) return;
+  const { data: conversation, error } = await supabase
+    .from("conversations")
+    .select("*")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error || !conversation) return;
+  const otherId = state.me.is_admin
+    ? conversation.user_id
+    : conversation.admin_id;
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", otherId).maybeSingle();
+  if (profile) await openConversation({ ...profile, _conversationId: conversationId });
 }
 
 // ===============================================================
@@ -1480,13 +1534,11 @@ function isMessageMine(message) {
 }
 
 function isMessageFromUser(message) {
-  const userId = state.activeConversation?.userId;
-
-  return Boolean(
-    userId &&
-    message?.sender_id &&
-    String(message.sender_id) === String(userId)
-  );
+  if (!message?.sender_id || !state.activeConversation) return false;
+  const ordinaryUserId = state.me?.is_admin
+    ? state.activeConversation.userId
+    : state.me.id;
+  return String(message.sender_id) === String(ordinaryUserId);
 }
 
 // ===============================================================
@@ -1621,6 +1673,7 @@ function buildMessageBubble(m) {
       : "";
 
   let buttonsHtml = "";
+  const canDeleteMessage = Boolean(state.me?.is_admin && !m._pending);
 
   if (
     !mine &&
@@ -1674,6 +1727,7 @@ function buildMessageBubble(m) {
         >
           😊
         </button>
+        ${canDeleteMessage ? `<button class="bubble-action-delete" title="حذف الرسالة" type="button">🗑️</button>` : ""}
       </div>
 
       ${quotedHtml}
@@ -1737,6 +1791,11 @@ function buildMessageBubble(m) {
       "click",
       () => setReplyTarget(m)
     );
+
+  div.querySelector(".bubble-action-delete")?.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    await deleteMessage(m);
+  });
 
   const reactBtn =
     div.querySelector(
@@ -1819,6 +1878,51 @@ function buildMessageBubble(m) {
   wireSwipeToReply(div, m);
 
   return div;
+}
+
+async function deleteMessage(message) {
+  if (!state.me?.is_admin || !message?.id || message._pending) return;
+  if (!window.confirm("هل تريد حذف هذه الرسالة؟")) return;
+  const { error } = await supabase.from("messages").delete().eq("id", message.id);
+  if (error) { showAuthError("تعذّر حذف الرسالة: " + error.message); return; }
+  state.messages = state.messages.filter((item) => item.id !== message.id);
+  await deleteCachedMessage(message.id);
+  delete state.reactions[message.id];
+  renderMessages();
+  await cacheMessages(state.activeConversation.id, state.messages);
+}
+
+async function deleteUser(profile) {
+  if (!state.me?.is_admin || !profile?.id) return;
+  if (!window.confirm(`حذف المستخدم ${profile.display_name || ""}؟ سيتم حذف محادثاته ورسائله.`)) return;
+  const { error } = await supabase.functions.invoke("admin-delete-user", { body: { userId: profile.id } });
+  if (error) { showAuthError("تعذّر حذف المستخدم: " + error.message); return; }
+  if (state.activeConversation?.userId === profile.id) closeChatView();
+  await loadContacts();
+  showAuthError("تم حذف المستخدم.");
+}
+
+async function getConversationRecipientId(conversationId, senderId) {
+  const { data: conversation, error } = await supabase
+    .from("conversations")
+    .select("user_id, admin_id")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error || !conversation) return null;
+  return String(senderId) === String(conversation.user_id)
+    ? conversation.admin_id
+    : conversation.user_id;
+}
+
+async function sendPushForMessage(message, receiverId) {
+  try {
+    const { error } = await supabase.functions.invoke("send-push", {
+      body: { record: { ...message, receiver_id: receiverId } },
+    });
+    if (error) console.warn("Push invoke failed:", error.message);
+  } catch (error) {
+    console.warn("Push invoke failed:", error);
+  }
 }
 
 // ===============================================================
@@ -2472,6 +2576,11 @@ async function sendMessage({
   // =============================================================
 
   if (insertedMessage) {
+    const recipientId = await getConversationRecipientId(conv.id, state.me.id);
+    if (recipientId && recipientId !== state.me.id) {
+      await sendPushForMessage(insertedMessage, recipientId);
+    }
+
     const exists =
       state.messages.some(
         (m) =>
@@ -2587,6 +2696,50 @@ async function handleAttachmentUpload(e) {
 // ===============================================================
 // AVATAR
 // ===============================================================
+
+function getStoragePath(bucket, publicUrl) {
+  if (!publicUrl) return null;
+  const marker = `/storage/v1/object/public/${bucket}/`;
+  const index = publicUrl.indexOf(marker);
+  return index === -1 ? null : decodeURIComponent(publicUrl.slice(index + marker.length));
+}
+
+async function removeStorageFile(bucket, publicUrl) {
+  const path = getStoragePath(bucket, publicUrl);
+  if (!path) return;
+  const { error } = await supabase.storage.from(bucket).remove([path]);
+  if (error) console.warn(`تعذّر حذف ملف ${bucket} من Storage:`, error.message);
+}
+
+async function removeAvatar() {
+  if (!state.me?.id) return;
+  const previousUrl = state.me.avatar_url;
+  try {
+    const { error } = await supabase.from("profiles").update({ avatar_url: null }).eq("id", state.me.id);
+    if (error) throw error;
+    state.me.avatar_url = null;
+    await removeStorageFile("avatars", previousUrl);
+    $("#my-avatar")?.removeAttribute("src");
+    showAuthError("تم حذف الصورة الشخصية.");
+  } catch (error) {
+    showAuthError("تعذّر حذف الصورة الشخصية: " + (error?.message || "خطأ غير معروف"));
+  }
+}
+
+async function removeWallpaper() {
+  if (!state.me?.id) return;
+  const previousUrl = state.me.wallpaper_url;
+  try {
+    const { error } = await supabase.from("profiles").update({ wallpaper_url: null }).eq("id", state.me.id);
+    if (error) throw error;
+    state.me.wallpaper_url = null;
+    await removeStorageFile("wallpapers", previousUrl);
+    applyThemeVars();
+    showAuthError("تم حذف خلفية الدردشة.");
+  } catch (error) {
+    showAuthError("تعذّر حذف خلفية الدردشة: " + (error?.message || "خطأ غير معروف"));
+  }
+}
 
 async function handleAvatarUpload(e) {
   const file =
@@ -2974,6 +3127,10 @@ async function flushOutbox() {
       }
 
       if (inserted) {
+        const recipientId = await getConversationRecipientId(msg.conversation_id, msg.sender_id);
+        if (recipientId && recipientId !== state.me?.id) {
+          await sendPushForMessage(inserted, recipientId);
+        }
         await patchContactUIOnNewMessage(
           inserted,
           {
@@ -3154,6 +3311,20 @@ function subscribeToConversation(
               conversationId
             );
           }
+        }
+      )
+        .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        async (payload) => {
+          state.messages = state.messages.filter((item) => item.id !== payload.old.id);
+          await deleteCachedMessage(payload.old.id);
+          renderMessages();
         }
       )
       .on(

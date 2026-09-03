@@ -59,6 +59,10 @@ export async function cacheMessages(conversationId, messages) {
   });
 }
 
+export async function deleteCachedMessage(messageId) {
+  return tx(STORES.messages, "readwrite", (store) => store.delete(messageId));
+}
+
 export async function getCachedMessages(conversationId) {
   const db = await openDb();
   return new Promise((resolve, reject) => {

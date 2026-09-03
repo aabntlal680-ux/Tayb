@@ -255,7 +255,7 @@ export async function disablePushNotifications() {
 
 export function listenForForegroundMessages({
   onNotification = null,
-  soundUrl = "./sounds/notification.mp3",
+  soundUrl = "./icons/notify.mp3",
 } = {}) {
 
   if (!messaging) {
