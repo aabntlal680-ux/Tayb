@@ -146,23 +146,27 @@ alter table public.chat_members enable row level security;
 
 -- 7) RLS Policies for fcm_tokens
 -- Users can manage only their own token row
-create policy if not exists "Users can read own fcm token"
+drop policy if exists "Users can read own fcm token" on public.fcm_tokens;
+create policy "Users can read own fcm token"
   on public.fcm_tokens
   for select
   using (auth.uid() = user_id or user_id is null);
 
-create policy if not exists "Users can upsert own fcm token"
+drop policy if exists "Users can upsert own fcm token" on public.fcm_tokens;
+create policy "Users can upsert own fcm token"
   on public.fcm_tokens
   for insert
   with check (auth.uid() = user_id or user_id is null);
 
-create policy if not exists "Users can update own fcm token"
+drop policy if exists "Users can update own fcm token" on public.fcm_tokens;
+create policy "Users can update own fcm token"
   on public.fcm_tokens
   for update
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
-create policy if not exists "Users can delete own fcm token"
+drop policy if exists "Users can delete own fcm token" on public.fcm_tokens;
+create policy "Users can delete own fcm token"
   on public.fcm_tokens
   for delete
   using (auth.uid() = user_id);
@@ -206,7 +210,8 @@ drop policy if exists "Users can upsert their own typing status" on public.typin
 drop policy if exists "Users can update their own typing status" on public.typing_status;
 drop policy if exists "Users can delete their own typing status" on public.typing_status;
 
-create policy if not exists "Users can read typing status in conversation they belong to"
+drop policy if exists "Users can read typing status in conversation they belong to" on public.typing_status;
+create policy "Users can read typing status in conversation they belong to"
   on public.typing_status
   for select
   using (
@@ -219,7 +224,8 @@ create policy if not exists "Users can read typing status in conversation they b
     )
   );
 
-create policy if not exists "Users can upsert their own typing status"
+drop policy if exists "Users can upsert their own typing status" on public.typing_status;
+create policy "Users can upsert their own typing status"
   on public.typing_status
   for insert
   with check (
@@ -231,7 +237,8 @@ create policy if not exists "Users can upsert their own typing status"
     )
   );
 
-create policy if not exists "Users can update their own typing status"
+drop policy if exists "Users can update their own typing status" on public.typing_status;
+create policy "Users can update their own typing status"
   on public.typing_status
   for update
   using (
@@ -251,7 +258,8 @@ create policy if not exists "Users can update their own typing status"
     )
   );
 
-create policy if not exists "Users can delete their own typing status"
+drop policy if exists "Users can delete their own typing status" on public.typing_status;
+create policy "Users can delete their own typing status"
   on public.typing_status
   for delete
   using (auth.uid() = user_id);
@@ -289,12 +297,14 @@ create policy "Users can update their own conversation"
   ));
 
 -- 10) RLS Policies for chat_members
-create policy if not exists "Members can read their own chat membership"
+drop policy if exists "Members can read their own chat membership" on public.chat_members;
+create policy "Members can read their own chat membership"
   on public.chat_members
   for select
   using (auth.uid() = user_id);
 
-create policy if not exists "Users can insert their own chat membership"
+drop policy if exists "Users can insert their own chat membership" on public.chat_members;
+create policy "Users can insert their own chat membership"
   on public.chat_members
   for insert
   with check (auth.uid() = user_id);
@@ -338,7 +348,8 @@ create policy "Users can update message status in their conversations"
   ));
 
 -- 12) Reaction policy
-create policy if not exists "Users can read reactions for their conversations"
+drop policy if exists "Users can read reactions for their conversations" on public.message_reactions;
+create policy "Users can read reactions for their conversations"
   on public.message_reactions
   for select
   using (
@@ -351,7 +362,8 @@ create policy if not exists "Users can read reactions for their conversations"
     )
   );
 
-create policy if not exists "Users can insert reactions to their own messages or conversation messages"
+drop policy if exists "Users can insert reactions to their own messages or conversation messages" on public.message_reactions;
+create policy "Users can insert reactions to their own messages or conversation messages"
   on public.message_reactions
   for insert
   with check (
@@ -462,7 +474,8 @@ create policy "Chat moderators can delete messages"
   using (public.is_chat_moderator(messages.conversation_id));
 
 drop policy if exists "Admins can delete ordinary-user conversations" on public.conversations;
-create policy if not exists "Admins can delete ordinary-user conversations"
+drop policy if exists "Admins can delete ordinary-user conversations" on public.conversations;
+create policy "Admins can delete ordinary-user conversations"
   on public.conversations for delete
   using (
     exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin = true)

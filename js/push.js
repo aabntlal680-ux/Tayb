@@ -6,6 +6,7 @@ import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.
 import {
   getMessaging,
   getToken,
+  deleteToken,
   onMessage,
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging.js";
 
@@ -248,6 +249,14 @@ export async function removeFcmToken(userId = null) {
         console.error("[FCM] فشل حذف التوكن من Supabase:", error);
       }
     }
+
+    if (messaging) {
+      try {
+        await deleteToken(messaging);
+      } catch (firebaseError) {
+        console.warn("[FCM] تعذّر إبطال التوكن عبر Firebase:", firebaseError);
+      }
+    }
   } catch (error) {
     console.error("[FCM] removeFcmToken:", error);
   } finally {
@@ -307,33 +316,22 @@ export function listenForForegroundMessages({
         data.body ||
         "لديك رسالة جديدة";
 
-      // ---------------------------------------------------------
-      // Play Sound
-      // ---------------------------------------------------------
-
-      try {
-        const audio = new Audio(soundUrl);
-
-        audio.volume = 1;
-
-        await audio.play().catch(() => {
-          console.warn(
-            "[FCM] تشغيل الصوت التلقائي محظور من المتصفح."
-          );
-        });
-      } catch (error) {
-        console.warn(
-          "[FCM] Audio error:",
-          error
-        );
-      }
-
       // في حالة foreground لا نستدعي showNotification من Service Worker؛
       // ذلك سيحوّل التنبيه إلى إشعار نظام. بدلاً منه يحدّث callback واجهة
       // التطبيق ويشغّل الصوت، بينما يتولى firebase-messaging-sw.js إشعار
       // النظام فقط عندما تكون الصفحة في الخلفية.
       if (document.visibilityState !== "visible") {
         return;
+      }
+
+      try {
+        const audio = new Audio(soundUrl);
+        audio.volume = 1;
+        await audio.play().catch(() => {
+          console.warn("[FCM] تشغيل الصوت التلقائي محظور من المتصفح.");
+        });
+      } catch (error) {
+        console.warn("[FCM] Audio error:", error);
       }
 
       // ---------------------------------------------------------

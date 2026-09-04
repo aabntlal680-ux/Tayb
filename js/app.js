@@ -3621,8 +3621,15 @@ function subscribeToConversation(
             `conversation_id=eq.${conversationId}`,
         },
         async (payload) => {
-          const message =
-            payload.new;
+          const message = payload.new;
+          const isIncoming = String(message.sender_id) !== String(state.me.id);
+          const receivedMessage = isIncoming && message.status === "sent"
+            ? { ...message, status: "delivered" }
+            : message;
+
+          if (isIncoming && message.status === "sent") {
+            persistDeliveredStatus(message.id);
+          }
 
           // =======================================================
           // LIVE CHAT APPEND
@@ -3631,19 +3638,17 @@ function subscribeToConversation(
           const exists =
             state.messages.some(
               (m) =>
-                m.id === message.id
+                m.id === receivedMessage.id
             );
 
           if (!exists) {
-            state.messages.push(
-              message
-            );
+            state.messages.push(receivedMessage);
 
             renderMessages();
 
             await cacheMessages(
               conversationId,
-              [message]
+              [receivedMessage]
             );
           }
 
@@ -3660,10 +3665,7 @@ function subscribeToConversation(
             }
           );
 
-          if (
-            message.sender_id !==
-            state.me.id
-          ) {
+          if (isIncoming) {
             playNotificationSound();
 
             // المحادثة مفتوحة، لذلك لا نزيد العداد.
@@ -3794,6 +3796,25 @@ function subscribeToConversation(
       .subscribe((status) => {
         scheduleRealtimeReconnect(status);
       });
+}
+
+// ===============================================================
+// MESSAGE DELIVERY / READ STATUS
+// ===============================================================
+
+async function persistDeliveredStatus(messageId) {
+  if (!state.me || !messageId) return;
+
+  const { error } = await supabase
+    .from("messages")
+    .update({ status: "delivered" })
+    .eq("id", messageId)
+    .neq("sender_id", state.me.id)
+    .eq("status", "sent");
+
+  if (error) {
+    console.warn("persistDeliveredStatus failed:", error.message);
+  }
 }
 
 // ===============================================================
@@ -4209,11 +4230,13 @@ function subscribeGlobalMessageWatch() {
           // ========================================================
 
           if (isActive) {
-            clearUnreadBadge(
-              msg.conversation_id
-            );
-
+            clearUnreadBadge(msg.conversation_id);
+            if (msg.status === "sent") persistDeliveredStatus(msg.id);
             return;
+          }
+
+          if (msg.status === "sent") {
+            persistDeliveredStatus(msg.id);
           }
 
           playNotificationSound();
