@@ -1,8 +1,8 @@
 // ============================================================
 // إعدادات الاتصال — عدّل القيم التالية بمعلومات مشروعك في Supabase
 // ============================================================
-export const SUPABASE_URL = "https://supabase-proxy.dadaleibold.workers.dev/";
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxem12aHd5ZnBvb3BxYXNjZ294Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4NjY3NjMsImV4cCI6MjEwMzQ0Mjc2M30.8at9boBSCM27IJUJQLHuIvCPM95bSxCLGFUx3qn9PK4";
+export const SUPABASE_URL = "https://gqocavvhhfwgkzscrjms.supabase.co";
+export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdxb2NhdnZoaGZ3Z2t6c2Nyam1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2MzE2MDMsImV4cCI6MjEwNDIwNzYwM30.x4HxOcAiusptsdflVje61wY8t9IfMOAGsCdUg3pIGaQ";
 
 export const VAPID_PUBLIC_KEY = "BAxTu3HSXPEgeTyTRPoXvpkLQWu8llJQfsPEoUr0MDjHKRJ0VSzPFcJw5RFv-s6BTnZYeWEHW8NSQzAjfOxoJfo";
 
